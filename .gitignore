@@ -1,0 +1,19 @@
+build/
+*.o
+*.elf
+*.bin
+*.map
+
+# Vendored third-party source trees (kept locally but not tracked — too large
+# and restored from upstream mirrors if needed).
+third_party/lua/lua-5.3.6/doc/
+
+# Editor / tooling local config
+.claude/
+.vscode/
+.DS_Store
+*.swp
+
+# Crash dumps / scratch
+*.stackdump
+/*.vgz

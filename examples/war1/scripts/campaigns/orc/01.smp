@@ -1,0 +1,6 @@
+-- Stratagus Map Presentation
+-- Generated from war1tool
+
+DefinePlayerTypes("person", "computer", "computer", "computer", "neutral", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "nobody", "neutral")
+PresentMap("(unnamed)", 16, 64, 64, 1)
+DefineMapSetup("campaigns/orc/01_c.sms")

@@ -1,0 +1,116 @@
+;
+; Jupiter 32X — Parallel CSI pixel output
+;
+; Emulates a camera sensor's DVP (Digital Video Port) output.
+; The V3s CSI controller captures this as if it were a real camera.
+;
+; Signals (directly connect to V3s parallel CSI pins):
+;   GPIO 0-7:  D[0:7]  pixel data (active during HREF)
+;   GPIO 8:    PCLK    pixel clock (active during HREF)  
+;   GPIO 9:    HREF    horizontal reference (high = valid pixel data)
+;   GPIO 10:   VSYNC   vertical sync (active high, active between frames)
+;
+; Protocol:
+;   VSYNC pulses high between frames
+;   For each line: HREF goes high, pixels clocked out on PCLK rising edges
+;   Between lines: HREF low during horizontal blanking
+;
+; The pixel SM is DMA-fed from the line buffer.
+; The sync SM handles HREF/VSYNC timing via command words from Core 1.
+;
+
+; ============================================================
+; SM0: Pixel data output
+; Outputs one 8-bit pixel per iteration, toggling PCLK.
+; Autopull enabled, 8-bit threshold.
+; Side-set: PCLK on GPIO 8 (1 side-set pin)
+; Out pins: D[0:7] on GPIO 0-7
+; ============================================================
+.program csi_pixel
+.side_set 1
+
+.wrap_target
+    out pins, 8     side 0      ; put pixel data on D[0:7], PCLK low
+    nop             side 1      ; PCLK high — V3s latches data on rising edge
+.wrap
+
+% c-sdk {
+static inline void csi_pixel_program_init(PIO pio, uint sm, uint offset,
+                                          uint data_pin, uint pclk_pin,
+                                          float clkdiv) {
+    pio_sm_config c = csi_pixel_program_get_default_config(offset);
+
+    /* OUT pins: 8 data pins starting at data_pin */
+    sm_config_set_out_pins(&c, data_pin, 8);
+    /* Side-set: PCLK */
+    sm_config_set_sideset_pins(&c, pclk_pin);
+    /* Autopull, 8-bit threshold, shift right */
+    sm_config_set_out_shift(&c, true, true, 8);
+    /* Clock divider */
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    /* Init pins */
+    for (uint i = data_pin; i < data_pin + 8; i++) {
+        pio_gpio_init(pio, i);
+    }
+    pio_gpio_init(pio, pclk_pin);
+
+    /* Set pin directions: all outputs */
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 8, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pclk_pin, 1, true);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
+
+; ============================================================
+; SM1: Sync signal generator
+; Drives HREF and VSYNC based on command words from CPU.
+;
+; With shift-right, bits come out LSB-first:
+;   [1:0]   = pin values: bit0 = HREF, bit1 = VSYNC
+;   [15:2]  = unused (14 bits)
+;   [31:16] = delay count (number of cycles to hold this state)
+;
+; Build a command word: (delay << 16) | (vsync << 1) | href
+;
+; OUT pins: HREF on GPIO 9, VSYNC on GPIO 10 (2 consecutive pins)
+; ============================================================
+.program csi_sync
+.wrap_target
+    pull block                  ; get command word
+    out pins, 2                 ; set HREF and VSYNC from bits [1:0]
+    out x, 14                  ; skip unused bits [15:2]
+    out x, 16                  ; load delay count from bits [31:16] into X
+delay_loop:
+    jmp x--, delay_loop         ; hold state for delay cycles
+.wrap
+
+% c-sdk {
+static inline void csi_sync_program_init(PIO pio, uint sm, uint offset,
+                                         uint href_pin, float clkdiv) {
+    pio_sm_config c = csi_sync_program_get_default_config(offset);
+
+    /* OUT pins: HREF, VSYNC (2 consecutive pins) */
+    sm_config_set_out_pins(&c, href_pin, 2);
+    /* Also set as SET pins for direct control */
+    sm_config_set_set_pins(&c, href_pin, 2);
+    /* Shift right, autopull off (we pull manually per command) */
+    sm_config_set_out_shift(&c, true, false, 32);
+    /* Clock divider — same as pixel SM for synchronized timing */
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    /* Init pins */
+    pio_gpio_init(pio, href_pin);
+    pio_gpio_init(pio, href_pin + 1);
+
+    /* Set pin directions: outputs */
+    pio_sm_set_consecutive_pindirs(pio, sm, href_pin, 2, true);
+
+    /* Start with HREF=0, VSYNC=0 */
+    pio_sm_set_pins(pio, sm, 0);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

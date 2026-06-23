@@ -1,0 +1,243 @@
+/* Jupiter port: ui_min.pkg — upstream ui.pkg lines 1-244 (through
+ * extern PixelPos CursorScreenPos). Skips the guichan widget bindings
+ * at line 250+ since we don't compile guichan on bare-metal. */
+
+$using namespace gcn;
+
+#include "font.h"
+
+enum ViewportModeType {
+	VIEWPORT_SINGLE = 0,
+	VIEWPORT_SPLIT_HORIZ,
+	VIEWPORT_SPLIT_HORIZ3,
+	VIEWPORT_SPLIT_VERT,
+	VIEWPORT_QUAD
+};
+
+/* LuaActionListener lives in widgets.h (guichan-dependent) — skipped
+ * until we port the widget layer. CUIButton.Callback omitted; scripts
+ * that call SetCallback will no-op cleanly with the compat shim below. */
+
+class CUIButton
+{
+	CUIButton();
+
+	int X;
+	int Y;
+	string Text;
+	ButtonStyle *Style;
+};
+
+$[
+CUIButton.SetCallback = function(w, f) end  -- no-op until widgets ported
+$]
+
+class CMapArea
+{
+	int X;
+	int Y;
+	int EndX;
+	int EndY;
+	int ScrollPaddingLeft;
+	int ScrollPaddingRight;
+	int ScrollPaddingTop;
+	int ScrollPaddingBottom;
+};
+
+class CViewport
+{
+	/* X/Y aren't real CViewport members; scripts never read them */
+};
+
+class CFiller
+{
+	CFiller();
+
+	CGraphicPtr G;
+	int X;
+	int Y;
+};
+
+class vector
+{
+	TOLUA_TEMPLATE_BIND(T, CFiller, CUIButton, CUIUserButton, string)
+
+	const T& operator[](int index) const;
+	T& operator[](int index);
+	const T& at(int index) const;
+	T& at(int index);
+
+	const T& front() const;
+	T& front();
+	const T& back() const;
+	T& back();
+
+	void push_back(T val);
+	void pop_back();
+
+	void assign(int num, const T& val);
+	void clear();
+	bool empty() const;
+	int size() const;
+};
+
+
+class CButtonPanel
+{
+	int X;
+	int Y;
+	vector<CUIButton> Buttons;
+	CColor AutoCastBorderColorRGB;
+	bool ShowCommandKey;
+};
+
+class CPieMenu
+{
+	CGraphicPtr G;
+	int MouseButton;
+	int X[8];
+	int Y[8];
+
+	void SetRadius(int radius);
+};
+
+class CResourceInfo
+{
+	CGraphicPtr G;
+	int IconFrame;
+	int IconX;
+	int IconY;
+	int IconWidth;
+	int TextX;
+	int TextY;
+};
+
+class CInfoPanel
+{
+	CGraphicPtr G;
+	int X;
+	int Y;
+};
+
+class CUIUserButton
+{
+	CUIUserButton();
+
+	bool Clicked;
+	CUIButton Button;
+};
+
+class CStatusLine
+{
+	void Set(const std::string status);
+	const std::string &Get();
+	void Clear();
+
+	int Width;
+	int TextX;
+	int TextY;
+	CFont *Font;
+};
+
+class CUITimer
+{
+	int X;
+	int Y;
+	CFont *Font;
+};
+
+class CUserInterface
+{
+	string NormalFontColor;
+	string ReverseFontColor;
+
+	vector<CFiller> Fillers;
+
+	CResourceInfo Resources[MaxResourceInfo];
+	CInfoPanel InfoPanel;
+	string DefaultUnitPortrait;
+	CUIButton *SingleSelectedButton;
+
+	vector<CUIButton> SelectedButtons;
+	CFont *MaxSelectedFont;
+	int MaxSelectedTextX;
+	int MaxSelectedTextY;
+
+	CUIButton *SingleTrainingButton;
+	vector<CUIButton> TrainingButtons;
+	CUIButton *UpgradingButton;
+	CUIButton *ResearchingButton;
+	vector<CUIButton> TransportingButtons;
+
+	vector<string> LifeBarColorNames;
+	vector<int> LifeBarPercents;
+	int LifeBarYOffset;
+	int LifeBarPadding;
+	bool LifeBarBorder;
+
+	CColor CompletedBarColorRGB;
+	bool CompletedBarShadow;
+
+	CButtonPanel ButtonPanel;
+
+	CPieMenu PieMenu;
+
+	CViewport *MouseViewport;
+	CMapArea MapArea;
+
+	CFont *MessageFont;
+	int MessageScrollSpeed;
+
+	CUIButton MenuButton;
+	CUIButton NetworkMenuButton;
+	CUIButton NetworkDiplomacyButton;
+
+	vector<CUIUserButton> UserButtons;
+
+	CMinimap Minimap;
+	CStatusLine StatusLine;
+	CUITimer Timer;
+
+	Vec2i EditorSettingsAreaTopLeft;
+	Vec2i EditorSettingsAreaBottomRight;
+	Vec2i EditorButtonAreaTopLeft;
+	Vec2i EditorButtonAreaBottomRight;
+
+	void Load();
+};
+
+extern tolua_readonly CUserInterface UI;
+
+class CIcon
+{
+	static CIcon *New(const std::string ident);
+	static CIcon *Get(const std::string ident);
+
+	tolua_readonly tolua_property__s std::string Ident;
+	CPlayerColorGraphicPtr G;
+	int Frame;
+
+	void ClearExtraGraphics();
+	void AddSingleSelectionGraphic(CPlayerColorGraphicPtr g);
+	void AddGroupSelectionGraphic(CPlayerColorGraphicPtr g);
+	void AddContainedGraphic(CPlayerColorGraphicPtr g);
+};
+
+extern ButtonStyle *FindButtonStyle(const std::string style);
+
+extern bool GetMouseScroll(void);
+extern void SetMouseScroll(bool enabled);
+extern bool GetKeyScroll(void);
+extern void SetKeyScroll(bool enabled);
+extern bool GetGrabMouse(void);
+extern void SetGrabMouse(bool enabled);
+extern bool GetLeaveStops(void);
+extern void SetLeaveStops(bool enabled);
+extern int GetDoubleClickDelay(void);
+extern void SetDoubleClickDelay(int delay);
+extern int GetHoldClickDelay(void);
+extern void SetHoldClickDelay(int delay);
+
+extern void SetScrollMargins(unsigned int top, unsigned int right, unsigned int bottom, unsigned int left);
+
+extern PixelPos CursorScreenPos;
