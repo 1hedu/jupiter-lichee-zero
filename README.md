@@ -6,9 +6,7 @@
 
 No OS. No engine. No abstraction.
 A C compiler, a 480×272 LCD, a 1.2 GHz Cortex-A7 with NEON, three
-hardware display layers, a hardware H.264 codec, four PCM channels, and
-a dare.
-
+hardware display layers, a hardware H.264 codec, four PCM channels.
 </div>
 
 ---
