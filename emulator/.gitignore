@@ -1,0 +1,14 @@
+# Build artifacts from jupiter .bin test binaries we drop in docs/
+docs/*.bin
+docs/*.elf
+docs/*.raw
+docs/*.img
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# Claude Code session state — not repo content
+.claude/

@@ -210,10 +210,21 @@ historical benchmark log.
 │                                   munt (MT-32), nuked_sc55, nuked_opn2,
 │                                   stratagus, lua, fonts
 ├── tools/                          renderers, codec helpers
+├── emulator/                       licheeEmu — QEMU device models for
+│                                   Lichee Pi Zero (V3s). Run jupiter.bin
+│                                   on a host PC byte-identical to real HW.
 ├── JupiterSDK.png                  logo
 ├── LIMITATIONS.md                  caveats + known issues
 └── README.md
 ```
+
+## Emulator
+
+The `emulator/` directory ships **licheeEmu** — a small set of QEMU device
+models for the Lichee Pi Zero (Allwinner V3s). Drop them into a stock
+QEMU 9.2.x source tree, build, and run any `jupiter.bin` exactly as the
+real board would. See [`emulator/README.md`](emulator/README.md) and
+[`emulator/docs/BUILD.md`](emulator/docs/BUILD.md).
 
 ## License
 
