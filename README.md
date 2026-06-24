@@ -11,36 +11,29 @@
 
 - **Hardware-accelerated 2D pipeline** — VI0 (game, double-buffered),
   VI1 (sprite), UI0 (overlay, double-buffered) composited by the DE2
-  mixer at zero CPU cost. NEON-optimized framebuffer fills (1.2 GB/s)
-  and sprite blits.
-- **Full audio stack** — 4-channel 48 kHz PCM mixer, NES APU + GameBoy APU
-  + SC-55 MIDI emulator (Nuked-SC55) + MT-32 emulator (Munt) + Genesis FM
-  synthesis (Nuked-OPN2). Drive directly or via the boilerplate-free
-  `audio_quickstart()`.
-- **Real MIDI I/O** — UART1 at 31250 baud on PE21/PE22, opto-isolated
-  DIN-5 IN/OUT, IRQ-driven RX ring buffer + SysEx assembler. Drive
-  external hardware synths over the wire or accept incoming MIDI into
-  the on-board YM3438. See [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md).
-- **MIDI hardware editors** — three full SysEx-driven sound editors
-  for vintage synths: Yamaha FB-01, Roland MT-32, and PPG WaveTerm /
-  Behringer Wave. Phosphor-CRT UI, every parameter exposed,
-  bidirectional dump request/receive over real MIDI.
-- **Retro PPU renderers** — full NES, SNES (all 8 modes), Genesis VDP,
-  Game Boy / GBC. Useful for emulator front-ends or as a fast software
-  rasterizer for retro-style games.
-- **CedarVE H.264 codec** — frame-by-frame I-frame decode, NV12→ARGB
-  conversion, encode setup. Used for cinematics in the Warcraft 1 port.
+  mixer. NEON-optimized framebuffer fills (1.2 GB/s) and sprite blits.
+- **Audio stack** — 4-channel 48 kHz PCM mixer; NES APU + GameBoy APU
+  + SC-55 MIDI emulator (Nuked-SC55) + MT-32 emulator (Munt) + Genesis
+  FM (Nuked-OPN2). Single-call bring-up via `audio_quickstart()`.
+- **MIDI I/O** — UART1 at 31250 baud on PE21/PE22, opto-isolated DIN-5
+  IN/OUT, IRQ-driven RX ring buffer, SysEx assembler. See
+  [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md) for the breakout wiring.
+- **MIDI hardware editors** — SysEx editors for Yamaha FB-01, Roland
+  MT-32, and PPG WaveTerm / Behringer Wave. Send / receive over the
+  UART1 wire.
+- **Retro PPU renderers** — NES, SNES (all 8 modes), Genesis VDP,
+  Game Boy / GBC.
+- **CedarVE H.264 codec** — I-frame decode + NV12→ARGB conversion;
+  encoder (I-frame) used by the `cedar_snes` example pipeline.
 - **Storage** — block-level SDMMC driver, vendored ChaN FatFs (R0.15a),
-  N64 Controller Pak filesystem with Nintendo-compatible note format.
-- **Retro controllers** — NES, SNES, Genesis (3-button + 6-button), and
-  N64 (digital + analog stick) over GPIO bit-bang. Controller Pak read/
-  write also works on real hardware.
-- **Real games run on it** — the included Warcraft 1 port (Stratagus +
-  War1gus, ~14k lines of upstream C++, Lua scripts, cinematics, save/
-  load) plays end-to-end on real silicon.
-- **QEMU emulator** — bundled `licheeEmu` device models let you run
-  any `jupiter.bin` on a host PC byte-identical to real hardware. No
-  board required for development.
+  N64 Controller Pak filesystem (Nintendo-compatible note format,
+  verified against real carts).
+- **Controllers** — NES, SNES, Genesis (3-button + 6-button), N64
+  (digital + analog stick) over GPIO bit-bang.
+- **Warcraft 1 port** — Stratagus + War1gus (~100k lines of upstream
+  C++ + Lua) plays end-to-end on real silicon.
+- **QEMU emulator** — `licheeEmu` device models for Lichee Pi Zero;
+  run any `jupiter.bin` on a host PC.
 
 ## Quick start
 
@@ -105,48 +98,51 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 ## Examples
 
-The `examples/` directory ships **63 reference programs**, grouped:
+The `examples/` directory ships **61 reference programs**, grouped:
 
 **Display & graphics** — `colorbars`, `bouncing_sprite`, `sprites`,
 `fast_tiles`, `parallax`, `parallax_all`, `parallax_test`, `mode1`,
 `mode2`, `mode7_neon`, `mode7_vortex`, `mode7_sprites`, `isometric`,
-`isometric_fullres`, `trilayer`, `genesis_vdp`, `snes_showcase`,
-`jupiter_logo`, `jupiter_moon`.
+`isometric_fullres`, `trilayer`, `jupiter_logo`, `jupiter_moon`.
 
-**Retro renderers** — `cedar_nes`, `cedar_snes`, `cedar_gb`,
-`cedar_genesis` (all using PPU-accurate renderers).
+**PPU renderers** — demos of the bundled retro renderers in `lib/`:
+- `cedar_nes` — NES PPU at native 256×224 (Mendel Palace sprites)
+- `cedar_gb` — GB PPU at native 160×144 (Pokemon Crystal animation)
+- `snes_showcase` — SNES PPU across all 8 modes
+- `genesis_vdp` — Genesis VDP: Plane A + Plane B + Window + sprites,
+  authentic 320×224
+- `cedar_snes` — H.264 encode → decode → SNES tile pipeline (hybrid)
+- `cedar_genesis` — H.264 decode → scale → Genesis VDP metasprite
+  (hybrid)
 
 **Audio** — `opn2_rt`, `opn2_input`, `opn2_jupiter`, `opn2_megademo`,
 `opn2_hw_*` (gb / nes / live / input / xtal — drive a real YM3438),
 `mt32_rt`, `mt32_poc`, `mt32_sine`, `mt32_monkey`, `sc55_warcraft`,
 `input_mt32`, `ym3438`.
 
-**MIDI hardware editors** — full SysEx-driven editors for vintage
-synths. Phosphor-CRT terminal aesthetic, every parameter exposed,
-bidirectional dump request/receive over real UART1 MIDI:
-- `fb01_editor` — Yamaha FB-01 (FM, 6 tabs: CONFIG / AUTOMATE /
-  BANKS / SET / VOICE / OPS)
-- `mt32_editor` — Roland MT-32 (LA synthesis, 6 tabs: CFG / PTS /
-  PCH / TIM / PTL / RHY with 4-partial deep editor)
-- `waveterm` — PPG WaveTerm / Behringer Wave (phosphor green
-  terminal with state-cached CRT post-process — scanlines, shadow
-  mask, phosphor bloom, vignette)
-- `waveterm_vdp` — Genesis VDP port of the WaveTerm UI: pure tile +
-  nametable rendering, 4-px packed font (80 chars per row), soft-tile
-  scope. Prototype for an eventual Sega Genesis port.
+**MIDI hardware editors** — SysEx editors driving real UART1 MIDI:
+- `fb01_editor` — Yamaha FB-01 (FM)
+- `mt32_editor` — Roland MT-32 (LA synthesis, partial editor)
+- `waveterm` — PPG WaveTerm / Behringer Wave
+- `waveterm_vdp` — Genesis VDP rewrite of the WaveTerm UI; tile +
+  nametable rendering, 4-px packed font. Prototype for an eventual
+  Sega Genesis port.
 
-**Video & A/V** — `cedar_video` (H.264 decode), `cedar_video_av`
-(H.264 + audio sync), `cedar_jpeg` (encode), `av_demo`.
+**Video** — `cedar_video` (H.264 decode), `cedar_video_av` (H.264 +
+audio sync), `cedar_jpeg` (small H.264 I-frame decode test, despite
+the legacy name), `av_demo` (multi-system audio + visuals showcase).
 
-**Storage** — `sdmmc`, `sdmmc_music`, `fs_test`, `cpak_browser`.
+**Storage** — `sdmmc`, `sdmmc_music`, `fs_test`, `cpak_browser`,
+`wc1_save` (Controller Pak + SD raw-block save round-trip).
 
-**Diagnostics** — `benchmark`, `mmu_dcache`, `sram_bench`, `scaler_probe`,
-`hdma_bench`, `hstimer_raster`, `input_test`, `input_demo`.
+**Diagnostics** — `benchmark`, `mmu_dcache`, `sram_bench`,
+`scaler_probe`, `hdma_bench`, `hstimer_raster`, `input_test`.
 
-**Full ports** — `war1` (Warcraft 1 / Stratagus + War1gus, end-to-end
-playable). `wc1_save` (Controller Pak + SD save round-trip).
+**Full port** — `war1` (Warcraft 1 / Stratagus + War1gus, end-to-end
+playable on real silicon).
 
-**Launchers** — `menu`, `launcher`.
+**Launcher** — `menu` (boots into a chooser that runs any of the
+above; auto-bundles the examples it knows about).
 
 Each example builds with `make GAME=examples/<name>/main.c`.
 
@@ -191,7 +187,6 @@ if (input_pressed() & BTN_A) { ... }
 
 /* ---- MIDI (UART1 @ 31250 baud, DIN-5 IN/OUT) ---- */
 midi_init();
-irq_global_enable();
 midi_send(sysex_bytes, len);            /* TX, blocking */
 midi_sysex_set_handler(on_sysex_in);    /* RX callback per F0..F7 packet */
 midi_pump();                             /* call each frame to drain RX */
@@ -231,7 +226,7 @@ historical benchmark log.
 ├── lib/                            SDK runtime (audio, video, cedar, sdmmc, …)
 ├── scripts/                        startup + linker + asset pipelines
 ├── template/                       starting-point game stub
-├── examples/                       58 reference programs
+├── examples/                       61 reference programs
 ├── docs/
 │   ├── (reference docs)
 │   ├── devlog/                     historical notes
@@ -277,11 +272,5 @@ WC1 port.
 
 ## Philosophy
 
-This project exists because the fifth-generation console
-philosophy — dedicated processors, bare-metal code, hardware as creative
-constraint — deserved to keep evolving. The Jupiter SDK is not retro.
-It is the road not taken, continued.
-
-A game console. A music workstation. A MIDI editor box. A demo
-platform. One little SoC, no OS, every watt serving the task in front
-of it.
+Bare-metal, no OS, one little SoC. Dedicated silicon for video, audio,
+codec, and storage; the CPU coordinates. Build what fits the silicon.
