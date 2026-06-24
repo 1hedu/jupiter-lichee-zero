@@ -22,6 +22,11 @@ third_party/lua/lua-5.3.6/doc/
 __pycache__/
 *.pyc
 
+# sc55_render local build artifacts (binary is a host-side x86_64
+# build of Nuked-SC55; rebuild instructions in tools/sc55_render/README.md)
+tools/sc55_render/build/
+tools/sc55_render/out/
+
 # WaveTerm asset-extraction working files (local-only)
 examples/waveterm/wtc32demo.zip
 examples/waveterm/_wtc_extract/

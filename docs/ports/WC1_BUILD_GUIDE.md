@@ -90,9 +90,13 @@ Two-step:
 
 ```bash
 # 1. Render every MIDI through Nuked-SC55 to WAV.
-#    Edit tools/sc55_render/render_all.sh to point MIDI_DIR at your
-#    extracted data.War1gus/music/ first.
-bash tools/sc55_render/render_all.sh
+#    Note: the sc55_render binary itself is NOT in this repo (the
+#    Nuked-SC55 driver source needs to land here in a future pass).
+#    See tools/sc55_render/README.md for the workarounds — either
+#    build Nuked-SC55 yourself, or render through any SC-55
+#    compatible synth and drop 00.wav…44.wav into tools/sc55_render/out/.
+#    Once the WAVs exist:
+bash tools/sc55_render/render_all.sh    # if you have a working sc55_render
 
 # 2. Pack the rendered WAVs into a single SD-block image.
 python scripts/sd_pack_music.py tools/sc55_render/out/ build/wc1_music.img
