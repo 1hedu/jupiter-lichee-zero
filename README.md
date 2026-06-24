@@ -16,11 +16,15 @@
   + SC-55 MIDI emulator (Nuked-SC55) + MT-32 emulator (Munt) + Genesis
   FM (Nuked-OPN2). Single-call bring-up via `audio_quickstart()`.
 - **MIDI I/O** — UART1 at 31250 baud on PE21/PE22, opto-isolated DIN-5
-  IN/OUT, IRQ-driven RX ring buffer, SysEx assembler. See
-  [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md) for the breakout wiring.
+  IN/OUT, IRQ-driven RX ring buffer, SysEx assembler. Software-side
+  only so far — no breakout has been wired yet; wire-level send /
+  receive is unverified. See [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md)
+  for the BOM and bring-up plan, and [`LIMITATIONS.md`](LIMITATIONS.md)
+  for what's verified vs unverified across the SDK.
 - **MIDI hardware editors** — SysEx editors for Yamaha FB-01, Roland
-  MT-32, and PPG WaveTerm / Behringer Wave. Send / receive over the
-  UART1 wire.
+  MT-32, and PPG WaveTerm / Behringer Wave. UIs run; SysEx packets
+  build correctly and log to UART0. Driving the actual synths waits
+  on the MIDI breakout.
 - **Retro PPU renderers** — NES, SNES (all 8 modes), Genesis VDP,
   Game Boy / GBC.
 - **CedarVE H.264 codec** — I-frame decode + NV12→ARGB conversion;
@@ -75,7 +79,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 | Document | Purpose |
 |---|---|
-| [`docs/SEGA_JUPITER_HARDWARE_REFERENCE.md`](docs/SEGA_JUPITER_HARDWARE_REFERENCE.md) | Complete V3s memory map, CCU, GPIO, TCON, DE2, display init. |
+| [`docs/JUPITER_HARDWARE_REFERENCE.md`](docs/JUPITER_HARDWARE_REFERENCE.md) | Complete V3s memory map, CCU, GPIO, TCON, DE2, display init. |
 | [`docs/GAME_DEV_TRICK_BIBLE.md`](docs/GAME_DEV_TRICK_BIBLE.md) | 15-chapter cookbook: DMA, NEON, layer compositing, scaler, double-buffer, tiles, sprites, dirty rects, cache, audio, raster effects. |
 | [`docs/CEDARVE_AND_RETRO_PIPELINES.md`](docs/CEDARVE_AND_RETRO_PIPELINES.md) | Hardware H.264 codec + Genesis/NES/GB/SNES rendering pipelines. |
 | [`docs/HSTIMER_AND_HDMA.md`](docs/HSTIMER_AND_HDMA.md) | Scanline-accurate raster interrupts. |

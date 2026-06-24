@@ -17,4 +17,4 @@ documentation set** — these are kept for historical context, lore, and
 | `LRADC_GAMEPAD_IDEA.md` | Brainstorm: single-pin gamepad via resistor ladder. |
 
 For user-facing reference, see `../GAME_DEV_TRICK_BIBLE.md`,
-`../SEGA_JUPITER_HARDWARE_REFERENCE.md`, etc. one level up.
+`../JUPITER_HARDWARE_REFERENCE.md`, etc. one level up.

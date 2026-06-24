@@ -1,4 +1,4 @@
-# Sega Jupiter — U-Boot SPL Build & Modification Guide
+# Jupiter SDK — U-Boot SPL Build & Modification Guide
 
 The V3s cannot run code from DRAM until the DDR2 controller is initialized.
 The Boot ROM (BROM) in the chip can only load ~24KB into SRAM. U-Boot's SPL

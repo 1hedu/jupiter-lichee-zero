@@ -1,4 +1,4 @@
-# Sega Jupiter — Game Developer's Trick Bible
+# Jupiter SDK — Game Developer's Trick Bible
 ### Every Hardware Trick Available on the Allwinner V3s for Game Rendering
 
 This document catalogs every performance technique available to a bare-metal

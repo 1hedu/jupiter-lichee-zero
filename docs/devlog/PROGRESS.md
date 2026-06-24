@@ -247,7 +247,7 @@ jupiter-sdk/
 ├── README.md
 ├── docs/
 │   ├── PROGRESS.md                        — this file
-│   ├── SEGA_JUPITER_HARDWARE_REFERENCE.md
+│   ├── JUPITER_HARDWARE_REFERENCE.md
 │   ├── GAME_DEV_TRICK_BIBLE.md
 │   └── UBOOT_SPL_GUIDE.md
 ├── include/

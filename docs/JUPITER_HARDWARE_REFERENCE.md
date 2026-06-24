@@ -1,4 +1,4 @@
-# Sega Jupiter — Hardware Reference (Allwinner V3s / Lichee Pi Zero)
+# Jupiter SDK — Hardware Reference (Allwinner V3s / Lichee Pi Zero)
 # Compiled from: V3s Datasheet V1.0, Linux kernel sun4i/sun8i DRM drivers,
 #                U-Boot sunxi_de2/lcdc sources, sun8i-v3s.dtsi device tree
 # All register addresses and bit fields verified against multiple sources.

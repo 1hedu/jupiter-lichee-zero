@@ -4,6 +4,59 @@ What the Jupiter SDK does **not** do, hardware features that are
 present-but-unwired, and known rough edges. Read this before committing
 to a project.
 
+## Verification status
+
+Many SDK features are built, compile clean, and have demos — but not
+all of them have been exercised end-to-end against the relevant
+external hardware. Distinguishing what's been *run on silicon* from
+what's *written and built but unverified*:
+
+### Verified on real hardware
+
+- LCD output (480×272 panel) — every visual example
+- N64 controller bit-bang — works in input demos + all editors
+- SDMMC0 — SD reads (boot), FatFs mounts, raw-block music pack
+- CedarVE H.264 decode — `cedar_video` plays back from SD
+- CedarVE H.264 encode — `cedar_snes` pipeline (encode → decode → tiles)
+- YM3438 hardware FM chip — `opn2_hw_*` examples
+- N64 Controller Pak read/write — `cpak_browser`, `wc1_save`
+  (round-tripped against real OEM carts)
+- Warcraft 1 port — campaign plays end-to-end on hardware
+- Audio mixer + all bundled chip emulators (NES APU, GB APU, Munt,
+  Nuked-SC55, Nuked-OPN2) — confirmed audible from the codec
+
+### Built but NOT yet tested with the external hardware they target
+
+- **MIDI I/O (`lib/midi.c`, UART1 driver)** — written, compiles, no
+  byte has yet left or arrived on the wire. The DIN-5 breakout per
+  `docs/MIDI_HW_GUIDE.md` hasn't been built. **All MIDI-related
+  claims below are software-side verification only:**
+  - FB-01 / MT-32 / WaveTerm editors build correct SysEx packets and
+    log them to UART0 — confirmed by inspecting the hex log.
+  - Whether the synth on the other end accepts those packets, and
+    whether response dumps come back through the opto-isolator into
+    our RX ring buffer, is **untested**.
+  - The "drive external hardware synths" and "bidirectional dump
+    request/receive" framing in the README is the design intent,
+    not a measured result.
+- **YM3438 fed by incoming MIDI** — the Genesis MIDI Module devlog
+  describes a voice allocator mapping MIDI channels → YM3438 FM
+  channels. Not implemented. The chip itself works (via VGM files);
+  the MIDI-driven path doesn't exist yet.
+- **`waveterm_vdp` on actual Sega Genesis hardware** — designed
+  against the Genesis VDP feature set + tile constraints. Runs on
+  the V3s via the Genesis renderer (`lib/genesis.c`). Has not been
+  cross-compiled for 68k / run on a real Genesis. Prototype.
+
+### Known-broken / stale
+
+- `examples/cedar_decode_test` — fixed in this audit pass; was
+  built against an older `cedar_h264_decode` signature and didn't
+  link since the initial commit.
+
+If you build on top of any "unverified" item, expect to spend time
+on bring-up that the SDK examples can't shortcut.
+
 ## Hardware features not exposed by the SDK
 
 The V3s ships with a number of peripherals that the SDK doesn't yet
