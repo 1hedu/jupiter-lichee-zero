@@ -42,6 +42,9 @@ def main():
             line = ", ".join(f"0x{b:02x}" for b in chunk)
             f.write(f"  {line},\n")
         f.write("};\n")
+        # Length constant — required by VGM-loader examples, harmless
+        # for ROM examples that don't reference it.
+        f.write(f"const unsigned int {symbol}_len = {size};\n")
     print(f"Done. {out_path} = {out_path.stat().st_size} bytes")
 
 

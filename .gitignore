@@ -74,6 +74,19 @@ examples/war1/war1_sound_catalog.h
 /Sega Genesis - *.gif
 /SNES - *.png
 
+# VGM music headers — copyrighted Sega Genesis compositions, must be
+# user-supplied. See docs/VGM_ASSETS.md for source filenames + how to
+# regenerate via scripts/rom_to_header.py.
+examples/genesis_vdp/fighting_back.h
+examples/opn2_jupiter/fighting_back.h
+examples/opn2_megademo/fighting_back.h
+examples/opn2_rt/fighting_back.h
+examples/ym3438/fighting_back.h
+examples/av_demo/step_on_beat.h
+examples/opn2_hw_live/sortie.h
+examples/opn2_hw_xtal/sortie.h
+*.vgm
+
 # Personal debug captures
 putty.log
 out.txt

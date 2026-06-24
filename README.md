@@ -90,6 +90,7 @@ make sdcard MNT=/mnt
 | [`docs/WIRING_GUIDE.md`](docs/WIRING_GUIDE.md) | Pinouts, controller wiring, audio mixing, backlight. |
 | [`docs/PIN_OVERLAYS.md`](docs/PIN_OVERLAYS.md) | GPIO overlay configurations. |
 | [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md) | MIDI breakout BOM + wiring + bring-up + loopback verification. |
+| [`docs/VGM_ASSETS.md`](docs/VGM_ASSETS.md) | Per-example VGM music source attribution + how to regenerate the embedded headers from user-supplied VGMs. |
 | [`docs/SHOPPING_LIST.md`](docs/SHOPPING_LIST.md) | Hardware BOM. |
 | [`LIMITATIONS.md`](LIMITATIONS.md) | Caveats, known issues, what the SDK does NOT cover. |
 
