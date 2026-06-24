@@ -35,7 +35,7 @@ Keep the stock SPL + full U-Boot, but configure U-Boot to automatically
 load and jump to `jupiter.bin` from the SD card. No source modification.
 Easiest to set up, slightly slower boot (U-Boot proper takes ~1-2 seconds).
 
-### Approach B: Direct Jump (The Manifesto Way)
+### Approach B: Direct Jump 
 
 Patch the SPL to skip U-Boot proper entirely. After DRAM init, the SPL
 reads `jupiter.bin` from a raw SD card offset into `0x41000000` and
