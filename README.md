@@ -283,5 +283,9 @@ WC1 port.
 
 ## Philosophy
 
-Bare-metal, no OS, one little SoC. Dedicated silicon for video, audio,
-codec, and storage; the CPU coordinates. Build what fits the silicon.
+This project exists because the fifth-generation console
+philosophy — dedicated processors, bare-metal code, hardware as creative
+constraint — deserved to keep evolving. The Jupiter SDK is not retro.
+It is the road not taken, continued.
+
+Four chips. No OS. Every watt serves the game.
