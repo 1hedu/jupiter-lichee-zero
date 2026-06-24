@@ -17,6 +17,14 @@
   + SC-55 MIDI emulator (Nuked-SC55) + MT-32 emulator (Munt) + Genesis FM
   synthesis (Nuked-OPN2). Drive directly or via the boilerplate-free
   `audio_quickstart()`.
+- **Real MIDI I/O** — UART1 at 31250 baud on PE21/PE22, opto-isolated
+  DIN-5 IN/OUT, IRQ-driven RX ring buffer + SysEx assembler. Drive
+  external hardware synths over the wire or accept incoming MIDI into
+  the on-board YM3438. See [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md).
+- **MIDI hardware editors** — three full SysEx-driven sound editors
+  for vintage synths: Yamaha FB-01, Roland MT-32, and PPG WaveTerm /
+  Behringer Wave. Phosphor-CRT UI, every parameter exposed,
+  bidirectional dump request/receive over real MIDI.
 - **Retro PPU renderers** — full NES, SNES (all 8 modes), Genesis VDP,
   Game Boy / GBC. Useful for emulator front-ends or as a fast software
   rasterizer for retro-style games.
@@ -30,6 +38,9 @@
 - **Real games run on it** — the included Warcraft 1 port (Stratagus +
   War1gus, ~14k lines of upstream C++, Lua scripts, cinematics, save/
   load) plays end-to-end on real silicon.
+- **QEMU emulator** — bundled `licheeEmu` device models let you run
+  any `jupiter.bin` on a host PC byte-identical to real hardware. No
+  board required for development.
 
 ## Quick start
 
@@ -62,6 +73,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 | **Reference panel** | 480×272 RGB parallel TFT (HY0430IPS04-04 or compatible) |
 | **Boot board** | Lichee Pi Zero |
 | **Serial** | UART0 @ 115200 8N1 (PB8 = TX, PB9 = RX) |
+| **MIDI** | UART1 @ 31250 baud (PE21 = TX, PE22 = RX) — opto-isolated DIN-5 IN/OUT (see [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md)) |
 | **Controllers** | NES / SNES / Genesis / N64 via GPIO bit-bang (see [`docs/PIN_OVERLAYS.md`](docs/PIN_OVERLAYS.md)) |
 
 ## Documentation
@@ -77,6 +89,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 | [`docs/UBOOT_SPL_GUIDE.md`](docs/UBOOT_SPL_GUIDE.md) | First-time boot setup. |
 | [`docs/WIRING_GUIDE.md`](docs/WIRING_GUIDE.md) | Pinouts, controller wiring, audio mixing, backlight. |
 | [`docs/PIN_OVERLAYS.md`](docs/PIN_OVERLAYS.md) | GPIO overlay configurations. |
+| [`docs/MIDI_HW_GUIDE.md`](docs/MIDI_HW_GUIDE.md) | MIDI breakout BOM + wiring + bring-up + loopback verification. |
 | [`docs/SHOPPING_LIST.md`](docs/SHOPPING_LIST.md) | Hardware BOM. |
 | [`LIMITATIONS.md`](LIMITATIONS.md) | Caveats, known issues, what the SDK does NOT cover. |
 
@@ -92,7 +105,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 ## Examples
 
-The `examples/` directory ships **58 reference programs**, grouped:
+The `examples/` directory ships **63 reference programs**, grouped:
 
 **Display & graphics** — `colorbars`, `bouncing_sprite`, `sprites`,
 `fast_tiles`, `parallax`, `parallax_all`, `parallax_test`, `mode1`,
@@ -104,9 +117,23 @@ The `examples/` directory ships **58 reference programs**, grouped:
 `cedar_genesis` (all using PPU-accurate renderers).
 
 **Audio** — `opn2_rt`, `opn2_input`, `opn2_jupiter`, `opn2_megademo`,
-`opn2_hw_*` (gb / nes / live / input — drive a real YM3438),
+`opn2_hw_*` (gb / nes / live / input / xtal — drive a real YM3438),
 `mt32_rt`, `mt32_poc`, `mt32_sine`, `mt32_monkey`, `sc55_warcraft`,
 `input_mt32`, `ym3438`.
+
+**MIDI hardware editors** — full SysEx-driven editors for vintage
+synths. Phosphor-CRT terminal aesthetic, every parameter exposed,
+bidirectional dump request/receive over real UART1 MIDI:
+- `fb01_editor` — Yamaha FB-01 (FM, 6 tabs: CONFIG / AUTOMATE /
+  BANKS / SET / VOICE / OPS)
+- `mt32_editor` — Roland MT-32 (LA synthesis, 6 tabs: CFG / PTS /
+  PCH / TIM / PTL / RHY with 4-partial deep editor)
+- `waveterm` — PPG WaveTerm / Behringer Wave (phosphor green
+  terminal with state-cached CRT post-process — scanlines, shadow
+  mask, phosphor bloom, vignette)
+- `waveterm_vdp` — Genesis VDP port of the WaveTerm UI: pure tile +
+  nametable rendering, 4-px packed font (80 chars per row), soft-tile
+  scope. Prototype for an eventual Sega Genesis port.
 
 **Video & A/V** — `cedar_video` (H.264 decode), `cedar_video_av`
 (H.264 + audio sync), `cedar_jpeg` (encode), `av_demo`.
@@ -162,6 +189,13 @@ input_init(INPUT_N64);
 input_state_t st = input_poll();
 if (input_pressed() & BTN_A) { ... }
 
+/* ---- MIDI (UART1 @ 31250 baud, DIN-5 IN/OUT) ---- */
+midi_init();
+irq_global_enable();
+midi_send(sysex_bytes, len);            /* TX, blocking */
+midi_sysex_set_handler(on_sysex_in);    /* RX callback per F0..F7 packet */
+midi_pump();                             /* call each frame to drain RX */
+
 /* ---- Timer ---- */
 timer_init();
 uint32_t t0 = timer_read();
@@ -170,8 +204,8 @@ uint32_t us = ticks_to_us(timer_elapsed(t0, timer_read()));
 
 Full surface in [`include/jupiter.h`](include/jupiter.h),
 [`include/input.h`](include/input.h), [`include/sdmmc.h`](include/sdmmc.h),
-[`include/hstimer.h`](include/hstimer.h), [`include/cpak.h`](include/cpak.h),
-[`include/cpakfs.h`](include/cpakfs.h).
+[`include/hstimer.h`](include/hstimer.h), [`include/midi.h`](include/midi.h),
+[`include/cpak.h`](include/cpak.h), [`include/cpakfs.h`](include/cpakfs.h).
 
 ## Performance highlights
 
@@ -209,7 +243,7 @@ historical benchmark log.
 ├── emulator/                       licheeEmu — QEMU device models for
 │                                   Lichee Pi Zero (V3s). Run jupiter.bin
 │                                   on a host PC byte-identical to real HW.
-├── JupiterSDK.png                  logo
+├── JupiterSDK-2.png                logo
 ├── LIMITATIONS.md                  caveats + known issues
 └── README.md
 ```
@@ -248,4 +282,6 @@ philosophy — dedicated processors, bare-metal code, hardware as creative
 constraint — deserved to keep evolving. The Jupiter SDK is not retro.
 It is the road not taken, continued.
 
-Four chips. No OS. Every watt serves the game.
+A game console. A music workstation. A MIDI editor box. A demo
+platform. One little SoC, no OS, every watt serving the task in front
+of it.
