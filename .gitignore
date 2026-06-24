@@ -18,6 +18,10 @@ third_party/lua/lua-5.3.6/doc/
 *.stackdump
 /*.vgz
 
+# Python build artifacts
+__pycache__/
+*.pyc
+
 # WaveTerm asset-extraction working files (local-only)
 examples/waveterm/wtc32demo.zip
 examples/waveterm/_wtc_extract/
