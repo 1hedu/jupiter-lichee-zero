@@ -191,17 +191,78 @@ Everything simultaneously. No conflicts.
 
 ---
 
+## Overlay 6: Studio Station — YM3438 + MIDI I/O + N64
+
+The hardware-instrument editor box. Drives external synths (FB-01,
+MT-32, Behringer Wave, etc.) over real MIDI; can also play the
+on-board YM3438 from incoming MIDI as a self-contained FM synth.
+N64 controller drives the editor UI; no Genesis controller in this
+overlay (dropped to keep PF0-PF5 available to SDC0 for runtime patch
+saves without a controller-vs-SD mux dance).
+
+```
+YM3438 FM synth (drivable from local MIDI loopback):
+  PB0-PB7   D0-D7 data bus           (2.54mm header)
+  PG0       A0                        (J3 pin 1)
+  PG1       A1                        (J3 pin 2)
+  PG2       /WR                       (J3 pin 3)
+  PG3       /CS                       (J3 pin 5)
+  PG4       /IC (reset)               (J3 pin 6)
+
+YM3438 clock:
+  External 8 MHz crystal oscillator wired directly to YM3438 φM pin.
+  Use a packaged TCXO ($1-2, free-running) or a discrete crystal +
+  22pF caps + 74HC04 inverter. V3s NOT involved — frees PE1 from
+  the YM3438 subsystem.
+
+  Pitch: 8.0 MHz vs Genesis-native 7.670453 MHz = ~4.3% sharp
+  (~0.7 semitone). Recompute F-Number on the fly, or buy a 7.6705
+  MHz TCXO for exact native pitch.
+
+MIDI (UART1):
+  PE21      MIDI OUT — UART1 TX, mux 4
+  PE22      MIDI IN  — UART1 RX, mux 4
+  See docs/MIDI_HW_GUIDE.md for the DIN-5 wiring (220Ω resistor on
+  TX, 6N138 opto on RX).
+
+N64 Controller (P1, drives editor UI):
+  PE20      N64 DATA                  (2.54mm pin 5)
+
+SDC0 (stays primary owner — runtime patch saves work without mux flip):
+  PF0-PF5   SD CMD/CLK/D0-D3          (active throughout)
+
+Debug:
+  PB8/PB9   UART0 console (115200)
+
+Free / available for future:
+  PE1       free (was YM3438 φM in OVL2)
+  PE23      free
+  PG5       free (was N64 P2 in OVL2)
+  PC0-PC3   free
+```
+
+**Pinmux note:** PE_CFG2 mux function 4 maps PE21 → UART1_TX and
+PE22 → UART1_RX on V3s. `lib/midi.c` reconfigures the relevant bits
+of PE_CFG2 in `midi_init()`.
+
+**Software stack:** `lib/midi.c` provides the byte-stream layer +
+SysEx assembler; editors call `midi_send()` for TX and `midi_pump()`
+each frame to drain incoming RX through the SysEx callback.
+Bring-up + loopback verification in `docs/MIDI_HW_GUIDE.md`.
+
+---
+
 ## Pin Quick Reference
 
-| Pin | OVL 0 | OVL 1 | OVL 2 | OVL 4 | OVL 5 |
-|---|---|---|---|---|---|
-| PB0-PB7 | Genesis+free | free | YM3438 D0-D7 | free | YM3438 D0-D7 |
-| PG0-PG4 | NES+Gen ctrl | free | YM3438 ctrl | free | YM3438 ctrl |
-| PG5 | Gen D4 | free | N64 P2 | free | N64 P2 |
-| PF0-PF5 | free | Controllers | free | Controllers | free |
-| PE1 | free | Gen SELECT | YM3438 φM | Gen SELECT | YM3438 φM |
-| PE20 | free | N64 | N64 P1 | N64 | N64 P1 |
-| PE21/22 | free | free | free | TC358743 I2C | TC358743 I2C |
-| PC0-PC3 | free | free | free | SPI to Pico | SPI to Pico |
-| MCSI | free | free | free | TC358743 CSI | TC358743 CSI |
-| PB8/PB9 | UART0 | UART0 | UART0 | UART0 | UART0 |
+| Pin | OVL 0 | OVL 1 | OVL 2 | OVL 4 | OVL 5 | OVL 6 |
+|---|---|---|---|---|---|---|
+| PB0-PB7 | Genesis+free | free | YM3438 D0-D7 | free | YM3438 D0-D7 | YM3438 D0-D7 |
+| PG0-PG4 | NES+Gen ctrl | free | YM3438 ctrl | free | YM3438 ctrl | YM3438 ctrl |
+| PG5 | Gen D4 | free | N64 P2 | free | N64 P2 | free |
+| PF0-PF5 | free | Controllers | free | Controllers | free | SDC0 |
+| PE1 | free | Gen SELECT | YM3438 φM | Gen SELECT | YM3438 φM | free |
+| PE20 | free | N64 | N64 P1 | N64 | N64 P1 | N64 P1 |
+| PE21/22 | free | free | free | TC358743 I2C | TC358743 I2C | UART1 MIDI |
+| PC0-PC3 | free | free | free | SPI to Pico | SPI to Pico | free |
+| MCSI | free | free | free | TC358743 CSI | TC358743 CSI | free |
+| PB8/PB9 | UART0 | UART0 | UART0 | UART0 | UART0 | UART0 |

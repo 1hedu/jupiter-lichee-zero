@@ -35,6 +35,7 @@
 #include "jupiter.h"
 #include "input.h"
 #include "pmu.h"
+#include "midi.h"
 #include <string.h>
 
 /* ================================================================
@@ -540,6 +541,9 @@ static void uart_puthex_byte(uint8_t b)
 
 static void midi_send_bytes(const uint8_t *buf, uint32_t len, const char *label)
 {
+    /* Push the bytes out the wire via UART1 (PE21 → 220Ω → DIN-5).
+     * Also log to UART0 for debug visibility. */
+    midi_send(buf, len);
     uart_puts("[midi tx "); uart_puts(label); uart_puts("] ");
     uart_putdec(len); uart_puts(" bytes:");
     for (uint32_t i = 0; i < len; i++) {
@@ -1368,6 +1372,12 @@ static void handle_file(uint32_t pressed)
 /* ================================================================
  *  Main
  * ================================================================ */
+static void waveterm_sysex_in(const uint8_t *bytes, uint32_t len)
+{
+    (void)bytes;
+    uart_puts("[midi rx] sysex "); uart_putdec(len); uart_puts(" bytes\n");
+}
+
 int main(void)
 {
     uart_puts("\n\n=== WaveTerm (PPG Wave / Behringer Wave editor) ===\n");
@@ -1376,6 +1386,9 @@ int main(void)
     pmu_init();
     video_init();
     input_init(INPUT_N64);
+    midi_init();
+    midi_sysex_set_handler(waveterm_sysex_in);
+    irq_global_enable();
 
     memset32_neon(OVL_ADDR,  0x00000000, LCD_W * LCD_H * 4);
     memset32_neon(OVL1_ADDR, 0x00000000, LCD_W * LCD_H * 4);
@@ -1392,6 +1405,7 @@ int main(void)
 
     while (1) {
         uint32_t t0 = timer_read();
+        midi_pump();   /* drain UART1 RX ring → SysEx assembler */
         (void)input_poll();
         uint32_t pressed = input_pressed();
 

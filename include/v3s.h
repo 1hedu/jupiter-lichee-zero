@@ -19,6 +19,8 @@
 #define OVL_ADDR            0x43B00000  /* UI0 overlay layer, buf 0  */
 #define OVL1_ADDR           0x43C00000  /* UI0 overlay layer, buf 1  */
 #define UART0_BASE          0x01C28000
+#define UART1_BASE          0x01C28400      /* MIDI / general-purpose UART */
+#define UART2_BASE          0x01C28800
 
 /* SRAM Controller */
 #define SRAM_CTRL_BASE      0x01C00000
@@ -41,6 +43,45 @@
 #define UART0_LSR           REG32(UART0_BASE + 0x14) /* Line status   */
 #define UART0_LSR_THRE      BIT(5)                    /* TX hold empty */
 #define UART0_LSR_DR        BIT(0)                    /* Data ready    */
+
+/* UART1 registers (same 16550 layout at +0x400 offset) */
+#define UART1_THR           REG32(UART1_BASE + 0x00) /* TX holding / DLL */
+#define UART1_RBR           REG32(UART1_BASE + 0x00) /* RX buffer / DLL  */
+#define UART1_DLL           REG32(UART1_BASE + 0x00) /* Divisor low      */
+#define UART1_DLH           REG32(UART1_BASE + 0x04) /* Divisor high     */
+#define UART1_IER           REG32(UART1_BASE + 0x04) /* IRQ enable       */
+#define UART1_IIR           REG32(UART1_BASE + 0x08) /* IRQ identify     */
+#define UART1_FCR           REG32(UART1_BASE + 0x08) /* FIFO control     */
+#define UART1_LCR           REG32(UART1_BASE + 0x0C) /* Line control     */
+#define UART1_MCR           REG32(UART1_BASE + 0x10) /* Modem control    */
+#define UART1_LSR           REG32(UART1_BASE + 0x14) /* Line status      */
+#define UART1_USR           REG32(UART1_BASE + 0x7C) /* UART status      */
+#define UART1_LSR_THRE      BIT(5)
+#define UART1_LSR_DR        BIT(0)
+#define UART1_USR_TFNF      BIT(1)                   /* TX FIFO not full */
+#define UART1_USR_RFNE      BIT(3)                   /* RX FIFO not empty*/
+#define UART1_IER_ERBFI     BIT(0)                   /* RX data IRQ      */
+#define UART1_LCR_DLAB      BIT(7)
+#define UART1_LCR_8N1       (0x03)                   /* 8-bit, no parity, 1 stop */
+#define UART1_FCR_FIFOE     BIT(0)
+#define UART1_FCR_RFIFOR    BIT(1)
+#define UART1_FCR_XFIFOR    BIT(2)
+#define UART1_FCR_RT_QTR    (1u << 6)                /* RX trigger = 1/4 full */
+
+/* CCU UART bus gates / resets (V3s) */
+#define CCU_BUS_CLK_GATE3   REG32(CCU_BASE + 0x006C)
+#define CCU_BUS_RST4        REG32(CCU_BASE + 0x02D8)
+#define GATE3_UART0         BIT(16)
+#define GATE3_UART1         BIT(17)
+#define GATE3_UART2         BIT(18)
+#define RST4_UART0          BIT(16)
+#define RST4_UART1          BIT(17)
+#define RST4_UART2          BIT(18)
+
+/* GIC IRQ IDs for UARTs (SPIs start at ID 32) */
+#define IRQ_UART0           32
+#define IRQ_UART1           33
+#define IRQ_UART2           34
 
 /* CCU: PLL */
 #define CCU_PLL_VIDEO_CTRL  REG32(CCU_BASE + 0x0010)

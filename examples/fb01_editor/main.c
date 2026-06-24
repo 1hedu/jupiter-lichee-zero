@@ -16,6 +16,7 @@
 #include "jupiter.h"
 #include "input.h"
 #include "pmu.h"
+#include "midi.h"
 #include <string.h>
 
 /* ================================================================
@@ -341,6 +342,9 @@ static void uart_puthex_byte(uint8_t b)
 
 static void midi_send_bytes(const uint8_t *buf, uint32_t len, const char *label)
 {
+    /* Push the bytes out the wire via UART1 (PE21 → 220Ω → DIN-5).
+     * Also log to UART0 for debug visibility. */
+    midi_send(buf, len);
     uart_puts("[midi tx ");
     uart_puts(label);
     uart_puts("] ");
@@ -1328,6 +1332,14 @@ static void ops_handle_input(uint32_t pressed)
  *  Main
  * ================================================================ */
 
+/* SysEx replies from the FB-01 land here. Phase-1 stub just logs
+ * the length; future commits can parse and populate the model. */
+static void fb01_sysex_in(const uint8_t *bytes, uint32_t len)
+{
+    (void)bytes;
+    uart_puts("[midi rx] sysex "); uart_putdec(len); uart_puts(" bytes\n");
+}
+
 int main(void)
 {
     uart_puts("\n\n=== FB-01 Sound Editor ===\n");
@@ -1336,6 +1348,9 @@ int main(void)
     pmu_init();
     video_init();
     input_init(INPUT_N64);
+    midi_init();
+    midi_sysex_set_handler(fb01_sysex_in);
+    irq_global_enable();
 
     /* Clear UI0 overlay + VI1 sprite buffers — boot DRAM garbage otherwise
      * blends over our VI0 paint. */
@@ -1354,6 +1369,8 @@ int main(void)
 
     while (1) {
         uint32_t t0 = timer_read();
+
+        midi_pump();   /* drain UART1 RX ring → SysEx assembler */
 
         (void)input_poll();
         uint32_t pressed = input_pressed();
