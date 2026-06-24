@@ -1,8 +1,16 @@
 # Jupiter SDK — Wiring Guide
 
-Complete connection reference for controllers and the Mars (Pico) coprocessor.
+Pin reference for the **optional peripherals** you can hang off the
+Lichee Pi Zero: retro controllers (NES / SNES / Genesis / N64), the
+Mars Pico 3D coprocessor, the YM3438 FM chip, the audio mixer
+network, and the MIDI breakout.
 
-All pin numbers verified against the Lichee Pi Zero schematic (lichee0_base.pdf).
+For **LCD, UART debug, and power** — the three things you wire
+before anything in this doc matters — see
+[`GETTING_STARTED.md`](GETTING_STARTED.md) section 3.
+
+All pin numbers verified against the Lichee Pi Zero schematic
+(`lichee0_base.pdf`).
 
 ---
 

@@ -47,79 +47,15 @@ This guide covers both.
 
 ## 3. Approach A: Stock U-Boot with Auto-Boot Script
 
-### 3.1 Build U-Boot
+Covered in full in [`GETTING_STARTED.md`](GETTING_STARTED.md) sections
+4-6 (build U-Boot, dd to SD, partition with parted, copy
+`boot.scr` + `jupiter.bin`, power up).
 
-On your Linux build machine (not in Claude's container):
+Result: ~2-3 second boot from power-on to game code running (most of
+which is U-Boot proper handing off to the script).
 
-```bash
-# Install toolchain
-sudo apt install gcc-arm-linux-gnueabihf make bison flex libssl-dev
-
-# Clone U-Boot
-git clone https://source.denx.de/u-boot/u-boot.git
-cd u-boot
-git checkout v2024.01   # or latest stable tag
-
-# Configure for Lichee Pi Zero
-make CROSS_COMPILE=arm-linux-gnueabihf- LicheePi_Zero_defconfig
-
-# Build
-make CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
-```
-
-Output: `u-boot-sunxi-with-spl.bin` (contains both SPL and U-Boot proper).
-
-### 3.2 Write to SD Card
-
-```bash
-# Write combined SPL + U-Boot to SD card at 8KB offset
-sudo dd if=u-boot-sunxi-with-spl.bin of=/dev/sdX bs=1024 seek=8 conv=notrunc
-sync
-```
-
-### 3.3 Create Boot Script
-
-Create a file `boot.cmd`:
-```
-# Load jupiter.bin from FAT partition 1 into DRAM at 0x41000000
-fatload mmc 0:1 0x41000000 jupiter.bin
-# Jump to it (go = raw jump, no kernel boot protocol)
-go 0x41000000
-```
-
-Compile it:
-```bash
-mkimage -C none -A arm -T script -d boot.cmd boot.scr
-```
-
-### 3.4 Prepare SD Card Partitions
-
-```bash
-# Create a single FAT32 partition starting at 1MB
-sudo fdisk /dev/sdX
-# n → p → 1 → 2048 → (default) → t → c (W95 FAT32 LBA) → w
-
-sudo mkfs.vfat /dev/sdX1
-sudo mount /dev/sdX1 /mnt
-sudo cp jupiter.bin /mnt/
-sudo cp boot.scr /mnt/
-sudo umount /mnt
-```
-
-### 3.5 Boot Sequence (Approach A)
-
-```
-Power on
-  → BROM loads SPL from SD offset 8KB into SRAM
-  → SPL initializes DDR2 (64MB)
-  → SPL loads U-Boot proper into DRAM
-  → U-Boot runs boot.scr
-  → boot.scr loads jupiter.bin to 0x41000000
-  → boot.scr executes "go 0x41000000"
-  → Jupiter code runs (color bars on LCD)
-```
-
-Total boot time: ~2-3 seconds (mostly U-Boot overhead).
+If that's working for you, you can stop here. Approach B below is
+optional and saves about 2 seconds of boot time.
 
 ---
 
@@ -347,9 +283,10 @@ echo "Done. Insert SD card and power on."
 
 ## 7. Recommendation
 
-Start with **Approach A** (stock U-Boot + boot.scr). It's zero-risk and
-lets you iterate on the display code without rebuilding the SPL every time.
-You just swap `jupiter.bin` on the FAT partition.
+Start with **Approach A** (stock U-Boot + boot.scr). It's zero-risk
+and lets you iterate on the game code without rebuilding the SPL
+every time — you just swap `jupiter.bin` on the FAT partition.
 
-Once the display is working and you're ready to ship a cartridge, switch
-to **Approach B** for the instant-on boot experience the Manifesto demands.
+Switch to **Approach B** only once you actually need the faster boot
+(packaging a release, demoing on hardware, etc.). For development,
+Approach A's extra 2 seconds of U-Boot overhead is fine.

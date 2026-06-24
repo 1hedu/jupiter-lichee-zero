@@ -1,5 +1,14 @@
 # Jupiter SDK — Shopping List
 
+For the **baseline BOM** (Lichee Pi Zero, LCD, SD card, USB-UART,
+power cable) needed to boot the first example, see
+[`GETTING_STARTED.md`](GETTING_STARTED.md) section 1.
+
+This list covers **optional peripherals** added on top of that base:
+real YM3438 FM, audio mixing parts, MIDI breakout, Mars Pico
+coprocessor wiring helpers. Most entries assume you already have a
+working baseline.
+
 ## Immediate (order now)
 
 | Part | Marking | Qty | For |

@@ -1,11 +1,20 @@
 # Jupiter SDK — Pin Overlay Configurations
 
-Different hardware setups require different pin assignments. Each overlay
-defines a complete pin configuration — like Linux device tree overlays
-but for bare-metal GPIO init.
+The V3s has more peripheral functions than physical pins. The
+controllers, the YM3438 data bus, the Mars Pico interface, the MIDI
+UART, and the SDC0 SD slot all want some of the same GPIO. So we
+don't try to make everything work at once — we ship a handful of
+**overlays**, each a tested pin layout for a specific peripheral
+mix. Pick the one whose peripheral list matches what you have wired,
+and use its pinout in your `input_init` / `gpio_init` calls.
 
-Select one overlay at build time or runtime. Each overlay documents
-exactly which peripherals are active and which pins they use.
+If you're just running the basic examples (color bars, parallax,
+sprites, etc.) and only have an N64 controller wired, **Overlay 1**
+is the safe default — everything still on PE-bank pins, no contention.
+
+If you're going deeper — adding a YM3438, Mars Pico, MIDI breakout —
+scan the table at the bottom of this file to find the overlay that
+includes everything you need.
 
 ---
 
