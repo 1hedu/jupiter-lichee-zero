@@ -3,10 +3,6 @@
 <img src="JupiterSDK-2.png" alt="Jupiter SDK" width="640">
 
 **Bare-metal game development kit for the Lichee Pi Zero (Allwinner V3s).**
-
-No OS. No engine. No abstraction.
-A C compiler, a 480×272 LCD, a 1.2 GHz Cortex-A7 with NEON, three
-hardware display layers, a hardware H.264 codec, four PCM channels.
 </div>
 
 ---
