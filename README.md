@@ -88,7 +88,14 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 ### Ports
 
-- [`docs/ports/`](docs/ports/) — Game / engine ports, audit reports.
+- [`docs/ports/WC1_BUILD_GUIDE.md`](docs/ports/WC1_BUILD_GUIDE.md) —
+  How to extract WC1 assets via War1gus and build the war1 example.
+- [`docs/ports/WC1_PORT_AUDIT.md`](docs/ports/WC1_PORT_AUDIT.md) —
+  Subsystem-by-subsystem status: upstream verbatim vs. modified /
+  stubbed.
+- [`docs/ports/WC1_PORTING_OTHER_STRATAGUS_GAMES.md`](docs/ports/WC1_PORTING_OTHER_STRATAGUS_GAMES.md) —
+  What would change to port Wargus / other Stratagus games on top
+  of the Jupiter scaffolding.
 
 ### Devlog (historical)
 
