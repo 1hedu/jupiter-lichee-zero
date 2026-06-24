@@ -39,24 +39,26 @@
 - **QEMU emulator** — `licheeEmu` device models for Lichee Pi Zero;
   run any `jupiter.bin` on a host PC.
 
-## Quick start
+## First time?
+
+Start at **[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md)** —
+a single linear page from "I just heard about this" to "the LCD
+shows the color bars example." Covers what to buy, how to wire it,
+how to install the toolchain on Linux / macOS / WSL, building
+U-Boot, partitioning the SD card, and first-boot verification.
+
+## Once everything is set up
 
 ```bash
-# Build the template game
-make
-
-# Or build any example
+# Build any example
 make GAME=examples/parallax/main.c
 
-# Generate the U-Boot boot script (requires u-boot-tools)
+# Generate the U-Boot boot script (one-time, requires u-boot-tools)
 make boot
 
-# Copy boot.scr + jupiter.bin to the boot partition of your SD card
+# Copy boot.scr + jupiter.bin to the FAT boot partition of your SD card
 make sdcard MNT=/mnt
 ```
-
-The SD card needs stock U-Boot for the Lichee Pi Zero. See
-[`docs/UBOOT_SPL_GUIDE.md`](docs/UBOOT_SPL_GUIDE.md) for first-time setup.
 
 ## Hardware
 
@@ -79,6 +81,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 | Document | Purpose |
 |---|---|
+| [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) | **Read this first** — zero-to-color-bars walkthrough for a new user. |
 | [`docs/JUPITER_HARDWARE_REFERENCE.md`](docs/JUPITER_HARDWARE_REFERENCE.md) | Complete V3s memory map, CCU, GPIO, TCON, DE2, display init. |
 | [`docs/GAME_DEV_TRICK_BIBLE.md`](docs/GAME_DEV_TRICK_BIBLE.md) | 15-chapter cookbook: DMA, NEON, layer compositing, scaler, double-buffer, tiles, sprites, dirty rects, cache, audio, raster effects. |
 | [`docs/CEDARVE_AND_RETRO_PIPELINES.md`](docs/CEDARVE_AND_RETRO_PIPELINES.md) | Hardware H.264 codec + Genesis/NES/GB/SNES rendering pipelines. |
