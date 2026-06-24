@@ -98,7 +98,7 @@ The SD card needs stock U-Boot for the Lichee Pi Zero. See
 
 ## Examples
 
-The `examples/` directory ships **61 reference programs**, grouped:
+The `examples/` directory ships **60 reference programs**, grouped:
 
 **Display & graphics** — `colorbars`, `bouncing_sprite`, `sprites`,
 `fast_tiles`, `parallax`, `parallax_all`, `parallax_test`, `mode1`,
@@ -106,18 +106,18 @@ The `examples/` directory ships **61 reference programs**, grouped:
 `isometric_fullres`, `trilayer`, `jupiter_logo`, `jupiter_moon`.
 
 **PPU renderers** — demos of the bundled retro renderers in `lib/`:
-- `cedar_nes` — NES PPU at native 256×224 (Mendel Palace sprites)
-- `cedar_gb` — GB PPU at native 160×144 (Pokemon Crystal animation)
+- `nes_ppu` — NES PPU at native 256×224 (Mendel Palace sprites)
+- `gb_ppu` — GB PPU at native 160×144 (Pokemon Crystal animation)
 - `snes_showcase` — SNES PPU across all 8 modes
 - `genesis_vdp` — Genesis VDP: Plane A + Plane B + Window + sprites,
   authentic 320×224
-- `cedar_snes` — H.264 encode → decode → SNES tile pipeline (hybrid)
-- `cedar_genesis` — H.264 decode → scale → Genesis VDP metasprite
-  (hybrid)
+- `cedar_snes` — CedarVE H.264 encode → decode → SNES tile pipeline
+- `cedar_genesis` — CedarVE H.264 decode → scale → Genesis VDP
+  metasprite
 
 **Audio** — `opn2_rt`, `opn2_input`, `opn2_jupiter`, `opn2_megademo`,
 `opn2_hw_*` (gb / nes / live / input / xtal — drive a real YM3438),
-`mt32_rt`, `mt32_poc`, `mt32_sine`, `mt32_monkey`, `sc55_warcraft`,
+`mt32_rt`, `mt32_poc`, `mt32_monkey`, `sc55_warcraft`,
 `input_mt32`, `ym3438`.
 
 **MIDI hardware editors** — SysEx editors driving real UART1 MIDI:
@@ -129,8 +129,8 @@ The `examples/` directory ships **61 reference programs**, grouped:
   Sega Genesis port.
 
 **Video** — `cedar_video` (H.264 decode), `cedar_video_av` (H.264 +
-audio sync), `cedar_jpeg` (small H.264 I-frame decode test, despite
-the legacy name), `av_demo` (multi-system audio + visuals showcase).
+audio sync), `cedar_decode_test` (small H.264 I-frame decode probe),
+`av_demo` (multi-system audio + visuals showcase).
 
 **Storage** — `sdmmc`, `sdmmc_music`, `fs_test`, `cpak_browser`,
 `wc1_save` (Controller Pak + SD raw-block save round-trip).

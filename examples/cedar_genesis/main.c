@@ -6,7 +6,7 @@
  *   Step 2: Cut scaled ARGB back into 4bpp Genesis tiles → metasprite
  *           (grid of hardware sprites, the way real Genesis does large characters)
  *
- * Build: make GAME=examples/cedar_sprites/main.c
+ * Build: make GAME=examples/cedar_genesis/main.c
  */
 #include "jupiter.h"
 #include "genesis.h"

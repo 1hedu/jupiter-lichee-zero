@@ -360,9 +360,9 @@ For small sprite sheets (<50KB), H.264 adds overhead. Pre-convert to native tile
 | `lib/gb.c` | Game Boy / GBC renderer |
 | `lib/snes.c` | SNES PPU renderer + sprite system |
 | `examples/cedar_genesis/` | Pulseman metasprite + encode→decode |
-| `examples/cedar_nes/` | Mendel Palace Vinci + NES PPU |
-| `examples/cedar_gb/` | Pokemon Crystal Celebi + GBC PPU |
 | `examples/cedar_snes/` | FF6 Magitek Soldier + encode→decode |
+| `examples/nes_ppu/` | Mendel Palace Vinci + NES PPU (no Cedar) |
+| `examples/gb_ppu/` | Pokemon Crystal Celebi + GBC PPU (no Cedar) |
 | `libcedarjpeg/` | Reference: cedrus driver, Bootlin encoder |
 | `third_party/cedar_aodzip/` | Reference: aodzip cedar driver (V3s) |
 | `tools/ve_probe.c` | Linux register dump utility |
