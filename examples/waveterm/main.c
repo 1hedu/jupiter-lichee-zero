@@ -151,12 +151,151 @@ static void int_to_str(int v, char *out)
 #define COL_PHOS_HOT    0xFFA0FF80    /* hot (cursor / selection) */
 #define COL_PHOS_AMBER  0xFFE0C040    /* amber (warning highlights) */
 
-/* CRT scanline post-pass: dim every odd row to ~62% to fake the
- * standard CRT raster look. */
-static void apply_scanlines(uint32_t *fb)
+/* ================================================================
+ *  CRT pipeline — reimplements the ffmpeg-crt-transform recipe
+ *  (scanlines + shadow mask + phosphor bloom + chromatic aberration
+ *  + vignette) natively. State-change cached: only re-runs when the
+ *  user actually changes something. Per-frame cost amortizes to a
+ *  single memcpy.
+ * ================================================================ */
+
+/* Two full-screen ARGB buffers held in the 14 MB BSS_LOW arena so
+ * they don't fight dlmalloc for CODE-region heap. */
+__attribute__((section(".bss_low")))
+static uint32_t base_buf[LCD_W * LCD_H];      /* clean render output */
+__attribute__((section(".bss_low")))
+static uint32_t cached_buf[LCD_W * LCD_H];    /* post-CRT result, displayed */
+__attribute__((section(".bss_low")))
+static uint32_t bloom_buf[LCD_W * LCD_H];     /* scratch for blur */
+
+static int g_dirty = 1;
+
+/* Stage 1: bloom extraction — keep only pixels brighter than threshold,
+ * zero everything else. Threshold on max RGB channel. */
+static void bloom_extract(const uint32_t *src, uint32_t *dst, int threshold)
+{
+    int n = LCD_W * LCD_H;
+    for (int i = 0; i < n; i++) {
+        uint32_t p = src[i];
+        int r = (p >> 16) & 0xFF;
+        int g = (p >>  8) & 0xFF;
+        int b =  p        & 0xFF;
+        int m = r > g ? r : g; if (b > m) m = b;
+        dst[i] = (m > threshold) ? p : 0xFF000000;
+    }
+}
+
+/* Stage 2: separable box blur (horizontal then vertical pass).
+ * Radius r → averages 2r+1 samples per pixel. Cheap and adequate as
+ * a phosphor-glow approximation. */
+static void box_blur_h(uint32_t *buf, int radius)
+{
+    static uint32_t row_tmp[LCD_W];
+    int w = LCD_W, h = LCD_H;
+    int span = radius * 2 + 1;
+    for (int y = 0; y < h; y++) {
+        uint32_t *row = buf + y * w;
+        int sr = 0, sg = 0, sb = 0;
+        for (int x = 0; x < span && x < w; x++) {
+            sr += (row[x] >> 16) & 0xFF;
+            sg += (row[x] >>  8) & 0xFF;
+            sb +=  row[x]        & 0xFF;
+        }
+        for (int x = 0; x < w; x++) {
+            int lo = x - radius, hi = x + radius;
+            if (hi < w && lo - 1 >= 0) {
+                sr += (row[hi] >> 16) & 0xFF;
+                sg += (row[hi] >>  8) & 0xFF;
+                sb +=  row[hi]        & 0xFF;
+                sr -= (row[lo - 1] >> 16) & 0xFF;
+                sg -= (row[lo - 1] >>  8) & 0xFF;
+                sb -=  row[lo - 1]        & 0xFF;
+            }
+            row_tmp[x] = 0xFF000000 |
+                         ((uint32_t)(sr / span) << 16) |
+                         ((uint32_t)(sg / span) << 8) |
+                         ((uint32_t) sb / span);
+        }
+        for (int x = 0; x < w; x++) row[x] = row_tmp[x];
+    }
+}
+
+static void box_blur_v(uint32_t *buf, int radius)
+{
+    static uint32_t col_tmp[LCD_H];
+    int w = LCD_W, h = LCD_H;
+    int span = radius * 2 + 1;
+    for (int x = 0; x < w; x++) {
+        int sr = 0, sg = 0, sb = 0;
+        for (int y = 0; y < span && y < h; y++) {
+            uint32_t p = buf[y * w + x];
+            sr += (p >> 16) & 0xFF;
+            sg += (p >>  8) & 0xFF;
+            sb +=  p        & 0xFF;
+        }
+        for (int y = 0; y < h; y++) {
+            int lo = y - radius, hi = y + radius;
+            if (hi < h && lo - 1 >= 0) {
+                uint32_t p_hi = buf[hi * w + x];
+                uint32_t p_lo = buf[(lo - 1) * w + x];
+                sr += (p_hi >> 16) & 0xFF;
+                sg += (p_hi >>  8) & 0xFF;
+                sb +=  p_hi        & 0xFF;
+                sr -= (p_lo >> 16) & 0xFF;
+                sg -= (p_lo >>  8) & 0xFF;
+                sb -=  p_lo        & 0xFF;
+            }
+            col_tmp[y] = 0xFF000000 |
+                         ((uint32_t)(sr / span) << 16) |
+                         ((uint32_t)(sg / span) << 8) |
+                         ((uint32_t) sb / span);
+        }
+        for (int y = 0; y < h; y++) buf[y * w + x] = col_tmp[y];
+    }
+}
+
+/* Stage 3: additive blend bloom buffer into dst (saturating). */
+static void bloom_add(uint32_t *dst, const uint32_t *bloom, int intensity_8)
+{
+    int n = LCD_W * LCD_H;
+    for (int i = 0; i < n; i++) {
+        uint32_t dp = dst[i], bp = bloom[i];
+        int dr = (dp >> 16) & 0xFF, dg = (dp >>  8) & 0xFF, db = dp & 0xFF;
+        int br = ((bp >> 16) & 0xFF) * intensity_8 >> 8;
+        int bg = ((bp >>  8) & 0xFF) * intensity_8 >> 8;
+        int bb = ( bp        & 0xFF) * intensity_8 >> 8;
+        int r = dr + br; if (r > 255) r = 255;
+        int g = dg + bg; if (g > 255) g = 255;
+        int b = db + bb; if (b > 255) b = 255;
+        dst[i] = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    }
+}
+
+/* Stage 4: shadow mask — every 3rd column emphasizes a different RGB
+ * channel by attenuating the other two. Mimics the aperture grille
+ * pattern of CRT shadow masks. */
+static void shadow_mask(uint32_t *buf)
+{
+    for (int y = 0; y < (int)LCD_H; y++) {
+        uint32_t *row = buf + y * LCD_W;
+        for (int x = 0; x < (int)LCD_W; x++) {
+            uint32_t p = row[x];
+            int r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+            switch (x % 3) {
+            case 0: g = g * 7 >> 3; b = b * 7 >> 3; break;  /* boost R */
+            case 1: r = r * 7 >> 3; b = b * 7 >> 3; break;  /* boost G */
+            case 2: r = r * 7 >> 3; g = g * 7 >> 3; break;  /* boost B */
+            }
+            row[x] = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+        }
+    }
+}
+
+/* Stage 5: scanlines — dim every other row to ~62%. */
+static void apply_scanlines(uint32_t *buf)
 {
     for (int y = 1; y < (int)LCD_H; y += 2) {
-        uint32_t *row = fb + y * LCD_W;
+        uint32_t *row = buf + y * LCD_W;
         for (int x = 0; x < (int)LCD_W; x++) {
             uint32_t p = row[x];
             uint32_t a = p & 0xFF000000;
@@ -166,6 +305,68 @@ static void apply_scanlines(uint32_t *fb)
             row[x] = a | (r << 16) | (g << 8) | b;
         }
     }
+}
+
+/* Stage 6: vignette — radial darken from center. Pre-computed
+ * 1D distance LUT keeps per-pixel cost to two table lookups. */
+static void apply_vignette(uint32_t *buf)
+{
+    int cx = LCD_W / 2, cy = LCD_H / 2;
+    int max_r2 = cx * cx + cy * cy;
+    for (int y = 0; y < (int)LCD_H; y++) {
+        int dy = y - cy;
+        uint32_t *row = buf + y * LCD_W;
+        for (int x = 0; x < (int)LCD_W; x++) {
+            int dx = x - cx;
+            int r2 = dx*dx + dy*dy;
+            /* Falloff: 1.0 at center → 0.55 at corners. Quadratic. */
+            int atten_8 = 256 - (r2 * 115) / max_r2;
+            uint32_t p = row[x];
+            int r = (((p >> 16) & 0xFF) * atten_8) >> 8;
+            int g = (((p >>  8) & 0xFF) * atten_8) >> 8;
+            int b = (( p        & 0xFF) * atten_8) >> 8;
+            row[x] = 0xFF000000 | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+        }
+    }
+}
+
+/* Stage 7: chromatic aberration — shift R left by 1 px and B right
+ * by 1 px so high-contrast edges fringe red/blue. Reads from src,
+ * writes to dst. (In-place would corrupt as we read.) */
+static void chroma_aberration(const uint32_t *src, uint32_t *dst)
+{
+    for (int y = 0; y < (int)LCD_H; y++) {
+        const uint32_t *srow = src + y * LCD_W;
+        uint32_t *drow = dst + y * LCD_W;
+        for (int x = 0; x < (int)LCD_W; x++) {
+            int xr = x - 1; if (xr < 0) xr = 0;
+            int xb = x + 1; if (xb >= (int)LCD_W) xb = LCD_W - 1;
+            uint32_t pr = srow[xr], pg = srow[x], pb = srow[xb];
+            drow[x] = 0xFF000000 |
+                      ((pr & 0x00FF0000)) |
+                      ((pg & 0x0000FF00)) |
+                      ((pb & 0x000000FF));
+        }
+    }
+}
+
+/* Run the full pipeline once: base_buf → cached_buf. */
+static void crt_pipeline(void)
+{
+    /* 1. Chromatic aberration writes shifted RGB to cached_buf */
+    chroma_aberration(base_buf, cached_buf);
+    /* 2. Build bloom from the original bright pixels */
+    bloom_extract(base_buf, bloom_buf, /*threshold=*/80);
+    box_blur_h(bloom_buf, 4);
+    box_blur_v(bloom_buf, 4);
+    /* 3. Additive blend bloom onto cached_buf */
+    bloom_add(cached_buf, bloom_buf, /*intensity=*/180);
+    /* 4. Shadow mask */
+    shadow_mask(cached_buf);
+    /* 5. Scanlines */
+    apply_scanlines(cached_buf);
+    /* 6. Vignette */
+    apply_vignette(cached_buf);
 }
 
 /* ================================================================
@@ -1195,8 +1396,8 @@ int main(void)
         uint32_t pressed = input_pressed();
 
         /* Page switching: L = previous, R = next */
-        if (pressed & BTN_L) active_page = (active_page + PAGE_COUNT - 1) % PAGE_COUNT;
-        if (pressed & BTN_R) active_page = (active_page + 1) % PAGE_COUNT;
+        if (pressed & BTN_L) { active_page = (active_page + PAGE_COUNT - 1) % PAGE_COUNT; g_dirty = 1; }
+        if (pressed & BTN_R) { active_page = (active_page + 1) % PAGE_COUNT; g_dirty = 1; }
 
         switch (active_page) {
         case PAGE_SYSTEM:    handle_system(pressed);    break;
@@ -1206,25 +1407,34 @@ int main(void)
         case PAGE_SEQUENCE:  handle_sequence(pressed);  break;
         case PAGE_FILE:      handle_file(pressed);      break;
         }
+        /* Any input event marks the cache dirty. Page-switch above
+         * already does it; this catches per-page nav/adjust too. */
+        if (pressed) g_dirty = 1;
 
-        uint32_t *fb = (uint32_t *)back_fb;
-        fill_rect(fb, 0, 0, LCD_W, LCD_H, COL_PHOS_BG);
-
-        render_header_band(fb);
-        render_meta_row(fb, active_page);
-
-        switch (active_page) {
-        case PAGE_SYSTEM:    render_page_system(fb); break;
-        case PAGE_VOICE:     render_page_voice(fb); break;
-        case PAGE_WAVETABLE: render_page_wavetable(fb); break;
-        case PAGE_SAMPLE:    render_page_sample(fb); break;
-        case PAGE_SEQUENCE:  render_page_sequence(fb); break;
-        case PAGE_FILE:      render_page_file(fb); break;
+        /* Only re-render + re-run CRT pipeline when something changed.
+         * Idle frames just memcpy the cached buffer to FB. */
+        if (g_dirty) {
+            fill_rect(base_buf, 0, 0, LCD_W, LCD_H, COL_PHOS_BG);
+            render_header_band(base_buf);
+            render_meta_row(base_buf, active_page);
+            switch (active_page) {
+            case PAGE_SYSTEM:    render_page_system(base_buf); break;
+            case PAGE_VOICE:     render_page_voice(base_buf); break;
+            case PAGE_WAVETABLE: render_page_wavetable(base_buf); break;
+            case PAGE_SAMPLE:    render_page_sample(base_buf); break;
+            case PAGE_SEQUENCE:  render_page_sequence(base_buf); break;
+            case PAGE_FILE:      render_page_file(base_buf); break;
+            }
+            render_fkey_row(base_buf, active_page);
+            uint32_t crt_t0 = timer_read();
+            crt_pipeline();
+            uint32_t crt_us = ticks_to_us(timer_elapsed(crt_t0, timer_read()));
+            uart_puts("[wt] crt pipeline: "); uart_putdec(crt_us); uart_puts(" us\n");
+            g_dirty = 0;
         }
 
-        render_fkey_row(fb, active_page);
-        apply_scanlines(fb);
-
+        /* Always present the cached buffer. */
+        memcpy_neon((uint32_t *)back_fb, cached_buf, LCD_W * LCD_H * 4);
         dcache_clean_fb(back_fb);
         video_swap(back_fb);
         uint32_t tmp = back_fb; back_fb = front_fb; front_fb = tmp;
