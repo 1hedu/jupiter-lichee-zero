@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="JupiterSDK.png" alt="Jupiter SDK" width="640">
+<img src="JupiterSDK-2.png" alt="Jupiter SDK" width="640">
 
 **Bare-metal game development kit for the Lichee Pi Zero (Allwinner V3s).**
 
