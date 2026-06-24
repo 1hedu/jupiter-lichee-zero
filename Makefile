@@ -286,6 +286,7 @@ CEDAR_VIDEO := $(findstring cedar_video,$(GAME))
 ifneq ($(CEDAR_VIDEO),)
   ASSET_OBJS = build/title_vbin.o
 endif
+# waveterm needs no embedded asset — UI is pure phosphor-CRT text mode.
 CEDAR_VIDEO_AV := $(findstring cedar_video_av,$(GAME))
 ifneq ($(CEDAR_VIDEO_AV),)
   ASSET_OBJS = build/title_vbin.o
@@ -371,6 +372,7 @@ build/ff6soldier_argb.o: tools/ff6soldier.argb
 build/pulseman_argb.o: tools/pulseman.argb
 	@mkdir -p build
 	$(CROSS)objcopy -I binary -O elf32-littlearm -B arm $< $@
+
 
 build/pulseman_h264.o: tools/pulseman.h264
 	@mkdir -p build

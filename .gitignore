@@ -17,3 +17,16 @@ third_party/lua/lua-5.3.6/doc/
 # Crash dumps / scratch
 *.stackdump
 /*.vgz
+
+# WaveTerm asset-extraction working files (local-only)
+examples/waveterm/wtc32demo.zip
+examples/waveterm/_wtc_extract/
+examples/waveterm/assets/wavesim_canvas.argb
+examples/waveterm/assets/wavesim_canvas_1440x816.png
+examples/waveterm/assets/wavesim_canvas_1440x816_p.png
+examples/waveterm/assets/wavesim_panel.bmp
+examples/waveterm/assets/wavesim_panel_480x272.png
+examples/waveterm/assets/wavesim_panel_lichee.png
+examples/waveterm/assets/waveterm_main.bmp
+examples/waveterm/assets/waveterm_main_480x272.png
+examples/waveterm/assets/vwheel.bmp
