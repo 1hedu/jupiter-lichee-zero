@@ -27,8 +27,9 @@
   on the MIDI breakout.
 - **Retro PPU renderers** — NES, SNES (all 8 modes), Genesis VDP,
   Game Boy / GBC.
-- **CedarVE H.264 codec** — I-frame decode + NV12→ARGB conversion;
-  encoder (I-frame) used by the `cedar_snes` example pipeline.
+- **CedarVE H.264 codec** — I-frame encode + decode + NV12↔ARGB
+  conversion; full hardware round-trip used by the `cedar_nes`,
+  `cedar_gb`, `cedar_snes`, and `cedar_genesis` example pipelines.
 - **Storage** — block-level SDMMC driver, vendored ChaN FatFs (R0.15a),
   N64 Controller Pak filesystem (Nintendo-compatible note format,
   verified against real carts).
@@ -121,14 +122,20 @@ The `examples/` directory ships **60 reference programs**, grouped:
 `isometric_fullres`, `trilayer`, `jupiter_logo`, `jupiter_moon`.
 
 **PPU renderers** — demos of the bundled retro renderers in `lib/`:
-- `nes_ppu` — NES PPU at native 256×224 (Mendel Palace sprites)
-- `gb_ppu` — GB PPU at native 160×144 (Pokemon Crystal animation)
 - `snes_showcase` — SNES PPU across all 8 modes
 - `genesis_vdp` — Genesis VDP: Plane A + Plane B + Window + sprites,
   authentic 320×224
-- `cedar_snes` — CedarVE H.264 encode → decode → SNES tile pipeline
-- `cedar_genesis` — CedarVE H.264 decode → scale → Genesis VDP
-  metasprite
+
+**Cedar + PPU** — all four PPU renderers wired through the V3s CedarVE
+H.264 codec in the main render path. Each builds an ARGB sprite atlas
+from the source CHR + palette, round-trips it through hardware
+encode→decode, then cuts the decoded output back to tiles via
+nearest-palette match for the PPU to render:
+- `cedar_nes` — Mendel Palace (Vinci) via NES PPU at 256×224
+- `cedar_gb` — Pokemon Crystal (Celebi) via GB PPU at 160×144
+- `cedar_snes` — FF6 Soldier via SNES PPU
+- `cedar_genesis` — Pulseman via Genesis VDP metasprite
+- `cedar_jpeg` — bonus: JPEG decode via CedarVE
 
 **Audio** — `opn2_rt`, `opn2_input`, `opn2_jupiter`, `opn2_megademo`,
 `opn2_hw_*` (gb / nes / live / input / xtal — drive a real YM3438),

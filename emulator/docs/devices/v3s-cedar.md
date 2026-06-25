@@ -1,13 +1,20 @@
-# `allwinner-v3s-cedar` — Cedar VE (H.264 decode)
+# `allwinner-v3s-cedar` — Cedar VE (H.264 decode + encode)
 
 Source: [`src/hw/misc/allwinner-v3s-cedar.c`](../../src/hw/misc/allwinner-v3s-cedar.c)
 Header: [`src/include/hw/misc/allwinner-v3s-cedar.h`](../../src/include/hw/misc/allwinner-v3s-cedar.h)
 
 The V3s "Video Engine" at `0x01C0E000`. On real silicon this is a
-fixed-function macroblock-by-macroblock H.264 baseline decoder driven
+fixed-function macroblock-by-macroblock H.264 baseline codec driven
 by register pokes. We substitute libavcodec on the host, which gives
-us the same "guest gets NV12 in DRAM" outcome with massively less code
-than reimplementing the silicon.
+us the same "guest gets NV12 in DRAM" (decode) / "guest gets a bitstream
+in DRAM" (encode) outcome with massively less code than reimplementing
+the silicon.
+
+The decode path (register block at `+0x200`) and the encode path
+(ISP block at `+0xA00`, AVC encoder block at `+0xB00`) share the same
+4 KiB MMIO window and the same QOM device — there is no separate encoder
+device. The guest driver for encode is Jupiter's `lib/cedar_enc.c`
+(ported from Bootlin's `cedrus_enc`).
 
 ## Registers
 
@@ -85,6 +92,57 @@ If libavcodec/libavutil weren't found at build time, the device
 compiles in stub mode: the trigger handler still sets SUCCESS but
 writes nothing. Symptom: the SDL window stays on the previous frame
 during cinematics.
+
+## Encode registers (ISP `+0xA00` / AVC encoder `+0xB00`)
+
+| Offset | Name              | Behavior                                                   |
+|--------|-------------------|------------------------------------------------------------|
+| 0x004  | `VE_RESET`        | Reads with "sync idle" bits 8+9 set (encoder init waits on it) |
+| 0x0A00 | `ISP_PIC_INFO`    | `mb_w << 16 \| mb_h` (we use these for the frame size)      |
+| 0x0A78 | `ISP_INPUT_Y`     | NV12 luma source DRAM addr                                  |
+| 0x0A7C | `ISP_INPUT_C`     | NV12 chroma source DRAM addr                                |
+| 0x0B08 | `AVC_ENC_PARA1`   | low 6 bits = fixed QP                                       |
+| 0x0B18 | `AVC_ENC_TRIGGER` | **1 = put-bits (ignored), 8 = ENC_START**                  |
+| 0x0B1C | `AVC_ENC_STATUS`  | w1c. Reads with PUT_BITS_RDY (bit 9) always set; bit 0 = FINISH |
+| 0x0B20 | `AVC_ENC_PUTBITS` | Header bits the guest stages (ignored — see below)         |
+| 0x0B80 | `AVC_ENC_STM_ADDR`| Output stream buffer DRAM addr                             |
+| 0x0B8C | `AVC_ENC_STM_MAX` | Output capacity in **bits**                                |
+| 0x0B90 | `AVC_ENC_STM_LEN` | Encoded length in **bits** (we set this; guest reads `/8`)  |
+
+## Encode flow (TRIGGER == 8)
+
+The guest stages an NV12 frame in DRAM (`lib/cedar_enc.c` even has an
+ARGB→NV12 helper), pokes the ISP input + encoder registers, hand-writes
+SPS/PPS/slice-header bit-by-bit via `put_bits`, then writes `8` to
+`AVC_ENC_TRIGGER`. We:
+
+1. Read `mb_w`/`mb_h` from `ISP_PIC_INFO`; input addrs from
+   `ISP_INPUT_Y`/`ISP_INPUT_C`; QP from `AVC_ENC_PARA1`; output buffer
+   from `AVC_ENC_STM_ADDR` (capacity from `AVC_ENC_STM_MAX / 8`).
+2. Open an `AV_CODEC_ID_H264` encoder lazily (libx264), `pix_fmt = NV12`,
+   `preset=ultrafast`, `tune=zerolatency`, constant `qp`. Reused across
+   frames; rebuilt if the dimensions or QP change.
+3. `address_space_read` the NV12 luma + interleaved-chroma planes straight
+   into the `AVFrame`, force `pict_type = I` (the guest emits all-IDR).
+4. `avcodec_send_frame` + `avcodec_receive_packet`. SPS/PPS are emitted
+   **in-band** (no `GLOBAL_HEADER` flag), so the packet is a complete,
+   self-contained decodable IDR — superseding the guest's hand-written
+   headers.
+5. `address_space_write` the bitstream to `AVC_ENC_STM_ADDR`, set
+   `AVC_ENC_STM_LEN = bytes * 8`, set `AVC_ENC_STATUS` FINISH.
+
+### Why we ignore `put_bits`
+
+The guest writes SPS/PPS/slice-header bits through `AVC_ENC_PUTBITS`
+before triggering, polling `PUT_BITS_RDY` (bit 9 of `AVC_ENC_STATUS`)
+between each. We don't accumulate those bits — libavcodec regenerates a
+correct header in-band — but we keep `PUT_BITS_RDY` permanently asserted
+on reads so the guest's poll loops exit immediately. Bit 9 is outside the
+`ENC_START` wait mask (`0xF`), so it never reads as a false FINISH.
+
+Like decode, we always set FINISH (even on encoder failure, e.g. ffmpeg
+built without an H.264 encoder → `AVC_ENC_STM_LEN = 0`) so the guest's
+50M-iteration poll loop exits instead of hanging.
 
 ## Why we set SUCCESS even on failure
 

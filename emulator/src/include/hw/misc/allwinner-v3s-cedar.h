@@ -1,9 +1,11 @@
 /*
- * Allwinner V3s Cedar VE (Video Engine) — H.264 decode shim.
+ * Allwinner V3s Cedar VE (Video Engine) — H.264 decode + encode shim.
  *
- * Real silicon is a fixed-function MB-by-MB H.264 baseline decoder
- * driven by register pokes; we substitute libavcodec on the host and
- * write decoded NV12 back into guest DRAM where the guest expects.
+ * Real silicon is a fixed-function MB-by-MB H.264 baseline codec
+ * driven by register pokes; we substitute libavcodec on the host —
+ * decode writes NV12 back into guest DRAM, encode reads an NV12 frame
+ * from guest DRAM and writes the H.264 bitstream back — both where the
+ * guest expects.
  *
  * Part of licheeEmu. SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -41,6 +43,20 @@ struct AwV3sCedarState {
     void    *avframe;   /* AVFrame* */
     void    *avpkt;     /* AVPacket* */
     bool     have_codec;
+
+    /* libavcodec H.264 *encoder* context. The guest's lib/cedar_enc.c
+     * stages an NV12 frame in DRAM, pokes the AVC encoder register block
+     * (0xA00..0xBC4), and triggers ENC_START; we run libx264 on the host
+     * and write the resulting Annex-B bitstream back into the guest's
+     * stream buffer. Reused across frames; rebuilt if w/h/qp change. */
+    void    *enc_ctx;   /* AVCodecContext* */
+    void    *enc_frame; /* AVFrame* */
+    void    *enc_pkt;   /* AVPacket* */
+    bool     have_enc;
+    uint32_t enc_w;
+    uint32_t enc_h;
+    int      enc_qp;
+    int64_t  enc_pts;   /* monotonic PTS counter for reused encoder */
 };
 
 #endif /* HW_MISC_ALLWINNER_V3S_CEDAR_H */

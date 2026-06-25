@@ -12,8 +12,9 @@
  * /CS is asserted (low) latches one bus cycle: port = {A1,A0}, data = PB.
  * /IC falling edge resets the chip.
  *
- * The pump_timer runs every 10 ms, asks Nuked-OPN2 for ~441 stereo samples
- * (at 44.1 kHz) and pushes them via AUD_write.
+ * Output is pull-driven by the QEMU audio backend: it invokes our callback
+ * asking for `len` bytes, which we generate from Nuked-OPN2 in PUMP_SAMPLES
+ * (441-frame) chunks and hand back via AUD_write.
  *
  * Part of licheeEmu. SPDX-License-Identifier: GPL-2.0-or-later
  */
