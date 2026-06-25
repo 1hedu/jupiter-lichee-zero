@@ -257,7 +257,16 @@ CEDAR_GENESIS := $(findstring cedar_genesis,$(GAME))
 ifneq ($(CEDAR_GENESIS),)
   ASSET_OBJS = build/pulseman_argb.o
 endif
-# cedar_nes: no external assets, CHR + thumbnail embedded as C headers
+# cedar_nes: vinci ARGB sheet for the CedarVE round-trip path
+CEDAR_NES := $(findstring cedar_nes,$(GAME))
+ifneq ($(CEDAR_NES),)
+  ASSET_OBJS = build/vinci_argb.o
+endif
+# cedar_gb: celebi ARGB sheet for the CedarVE round-trip path
+CEDAR_GB := $(findstring cedar_gb,$(GAME))
+ifneq ($(CEDAR_GB),)
+  ASSET_OBJS = build/celebi_argb.o
+endif
 CEDAR_SNES := $(findstring cedar_snes,$(GAME))
 ifneq ($(CEDAR_SNES),)
   ASSET_OBJS = build/ff6soldier_argb.o
@@ -370,6 +379,14 @@ build/ff6soldier_argb.o: tools/ff6soldier.argb
 	$(CROSS)objcopy -I binary -O elf32-littlearm -B arm $< $@
 
 build/pulseman_argb.o: tools/pulseman.argb
+	@mkdir -p build
+	$(CROSS)objcopy -I binary -O elf32-littlearm -B arm $< $@
+
+build/vinci_argb.o: tools/vinci.argb
+	@mkdir -p build
+	$(CROSS)objcopy -I binary -O elf32-littlearm -B arm $< $@
+
+build/celebi_argb.o: tools/celebi.argb
 	@mkdir -p build
 	$(CROSS)objcopy -I binary -O elf32-littlearm -B arm $< $@
 
