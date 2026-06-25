@@ -257,7 +257,7 @@ CEDAR_GENESIS := $(findstring cedar_genesis,$(GAME))
 ifneq ($(CEDAR_GENESIS),)
   ASSET_OBJS = build/pulseman_argb.o
 endif
-# nes_ppu: no external assets, CHR + thumbnail embedded as C headers
+# cedar_nes: no external assets, CHR + thumbnail embedded as C headers
 CEDAR_SNES := $(findstring cedar_snes,$(GAME))
 ifneq ($(CEDAR_SNES),)
   ASSET_OBJS = build/ff6soldier_argb.o

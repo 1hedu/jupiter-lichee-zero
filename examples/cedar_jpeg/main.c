@@ -4,7 +4,7 @@
  * Decodes an embedded 64x64 H.264 I-frame (solid red) using the V3s
  * H.264 decode engine, converts NV12 → ARGB, displays scaled on screen.
  *
- * Build: make GAME=examples/cedar_decode_test/main.c
+ * Build: make GAME=examples/cedar_jpeg/main.c
  */
 #include "jupiter.h"
 #include "pmu.h"

@@ -5,7 +5,7 @@
  * authentic NES PPU pipeline at 256×224 with vblank sync.
  * VI1 shows the full sprite sheet with red frame indicator.
  *
- * Build: make GAME=examples/nes_ppu/main.c
+ * Build: make GAME=examples/cedar_nes/main.c
  */
 #include "jupiter.h"
 #include "nes.h"

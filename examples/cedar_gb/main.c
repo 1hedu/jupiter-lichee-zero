@@ -5,7 +5,7 @@
  * GB PPU rendering at 160×144 authentic, vblank synced,
  * full sprite sheet on VI1.
  *
- * Build: make GAME=examples/gb_ppu/main.c
+ * Build: make GAME=examples/cedar_gb/main.c
  */
 #include "jupiter.h"
 #include "gb.h"

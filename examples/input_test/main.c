@@ -16,8 +16,8 @@
 #include <string.h>
 
 /* Pre-converted tile data */
-#include "../../examples/nes_ppu/vinci_chr.h"
-#include "../../examples/gb_ppu/celebi_chr.h"
+#include "../../examples/cedar_nes/vinci_chr.h"
+#include "../../examples/cedar_gb/celebi_chr.h"
 #include "../../examples/cedar_snes/soldier_chr.h"
 
 /* Genesis: raw ARGB sprite sheet embedded via objcopy */
