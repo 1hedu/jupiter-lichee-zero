@@ -309,11 +309,17 @@ ifneq ($(MT32_RT),)
                build/mt32_rt/mt32_pcm_rom.o \
                $(MT32_MIDI_OBJS)
   ifneq ($(MENU_BUILD),)
-    # Menu needs pulseman.argb too (for other demos that expect it)
-    ASSET_OBJS += build/pulseman_argb.o
+    # Menu pulls in every cedar example — link all their ARGB sheets
+    ASSET_OBJS += build/pulseman_argb.o \
+                  build/vinci_argb.o \
+                  build/celebi_argb.o \
+                  build/ff6soldier_argb.o
   endif
 else ifneq ($(MENU_BUILD),)
-  ASSET_OBJS = build/pulseman_argb.o
+  ASSET_OBJS = build/pulseman_argb.o \
+               build/vinci_argb.o \
+               build/celebi_argb.o \
+               build/ff6soldier_argb.o
 endif
 
 TARGET = build/jupiter

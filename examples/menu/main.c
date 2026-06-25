@@ -144,6 +144,13 @@ extern void trilayer_main(void);
 extern void isometric_main(void);
 extern void isometric_fullres_main(void);
 
+/* --- CedarVE (H.264 hardware) --- */
+extern void cedar_nes_main(void);
+extern void cedar_gb_main(void);
+extern void cedar_snes_main(void);
+extern void cedar_genesis_main(void);
+extern void cedar_jpeg_main(void);
+
 /* --- Audio --- */
 extern void jupiter_moon_main(void);
 extern void av_demo_main(void);
@@ -211,6 +218,13 @@ static const menu_entry_t entries[] = {
     {"Tri-Layer",               trilayer_main,           ENTRY_DEMO},
     {"Isometric",               isometric_main,          ENTRY_DEMO},
     {"Isometric Fullres",       isometric_fullres_main,  ENTRY_DEMO},
+
+    {"--- CEDARVE (H.264) ---", NULL,                    ENTRY_HEADER},
+    {"Cedar NES (Vinci)",       cedar_nes_main,          ENTRY_DEMO},
+    {"Cedar GB (Celebi)",       cedar_gb_main,           ENTRY_DEMO},
+    {"Cedar SNES (FF6)",        cedar_snes_main,         ENTRY_DEMO},
+    {"Cedar Genesis (Pulse)",   cedar_genesis_main,      ENTRY_DEMO},
+    {"Cedar JPEG decode",       cedar_jpeg_main,         ENTRY_DEMO},
 
     {"--- AUDIO ---",           NULL,                    ENTRY_HEADER},
     {"Jupiter Moon",            jupiter_moon_main,       ENTRY_DEMO},
