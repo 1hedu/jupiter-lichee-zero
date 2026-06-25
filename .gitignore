@@ -90,6 +90,9 @@ examples/opn2_hw_xtal/sortie.h
 # Personal debug captures
 putty.log
 out.txt
+
+# Local-only emulator screenshot capture pipeline
+screenshots/
 /MT-32_v1.07_legacy_ROM_files.zip
 /Roland SC-55 mkII.zip
 /jupiter-mars-pico.tar.gz
