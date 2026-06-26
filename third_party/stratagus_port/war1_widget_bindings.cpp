@@ -114,6 +114,52 @@ extern "C" const uint8_t *war1_pc8_pixels_for(const CGraphic *g, int *outW, int 
 extern "C" const uint32_t *war1_pc8_palette_for(const CGraphic *g);
 extern "C" uint32_t        war1_pc8_palette_epoch(const void *g);
 using CGraphicPtr = std::shared_ptr<CGraphic>;
+/* C2: JupiterImage cache keyed by (CGraphic*, outW, outH). Paired with
+ * B1's CGraphic dedup, repeated ImageWidget(sameGraphic) constructions
+ * (every briefing's bg1, every animation strip, repeated mission loads,
+ * etc.) reuse the same ARGB buffer instead of malloc'ing a fresh
+ * Video.W*Video.H*4 = 510 KB blob per construction. Widgets still
+ * never destruct (Hazard C structural), but with B1+C2 the same image
+ * across many loads costs one buffer total instead of N.
+ *
+ * The cache holds shared_ptr<gcn::Image> with strong refs; when this
+ * fires, the SAME JupiterImage object backs every ImageWidget that
+ * asked for that source. ownsPixels=true is still safe — the ARGB is
+ * freed exactly when the cache entry itself drops (which is never on
+ * the device, so effectively a bounded per-image leak — same shape as
+ * the widget leak but a small fraction of the volume). */
+#include <map>
+#include <tuple>
+#include <cstring>
+/* B1-bisect lesson: std::unordered_map's first-insert bucket
+ * allocation triggers std::bad_array_new_length under our
+ * arm-none-eabi-gcc 14.2 + libstdc++ build, before any cache entry
+ * is ever stored. std::map (tree, no bucket arrays) works fine and
+ * is what upstream Stratagus uses for similar string→smart-pointer
+ * caches. Key is (CGraphic*, outW, outH) as a std::tuple, which has
+ * a natural lexicographic ordering. */
+using JImageCacheKey = std::tuple<const CGraphic *, int, int>;
+static std::map<JImageCacheKey, std::shared_ptr<gcn::Image>> s_jimage_cache;
+/* C1: drop cache entries that no live widget references anymore
+ * (use_count == 1 means we're the sole holder). Called from the menu
+ * subtree sweep after widget deletions, so any briefing-bg or
+ * animation-strip image whose owning widgets just got destroyed
+ * actually frees its ARGB buffer. Bounded work; map is small. */
+extern "C" void war1_jimg_cache_evict_orphans(void) {
+    unsigned evicted = 0;
+    for (auto it = s_jimage_cache.begin(); it != s_jimage_cache.end(); ) {
+        if (it->second.use_count() == 1) {
+            it = s_jimage_cache.erase(it);
+            evicted++;
+        } else {
+            ++it;
+        }
+    }
+    if (evicted) {
+        uart_puts("[JC] evicted "); uart_putdec(evicted);
+        uart_puts(" jimg cache entries\n");
+    }
+}
 static std::shared_ptr<gcn::Image> arg_to_image(lua_State *L, int idx) {
     void *p = tolua_tousertype(L, idx, nullptr);
     if (!p) return nullptr;
@@ -143,6 +189,10 @@ static std::shared_ptr<gcn::Image> arg_to_image(lua_State *L, int idx) {
     int outW = sheetW, outH = sheetH;
     if (g->Width  > sheetW) outW = g->Width;
     if (g->Height > sheetH) outH = g->Height;
+    /* C2: cache hit short-circuits the malloc + ARGB bake. */
+    JImageCacheKey k(g, outW, outH);
+    auto cit = s_jimage_cache.find(k);
+    if (cit != s_jimage_cache.end()) return cit->second;
     auto *argb = static_cast<uint32_t *>(std::malloc(outW * outH * sizeof(uint32_t)));
     if (!argb) return nullptr;
     if (outW == sheetW && outH == sheetH) {
@@ -169,7 +219,9 @@ static std::shared_ptr<gcn::Image> arg_to_image(lua_State *L, int idx) {
     /* Tag the source CGraphic + current palette epoch so drawImage can
      * detect a SetPaletteColor since bake and re-expand from live pc8 */
     jimg->setPC8Source(g, war1_pc8_palette_epoch(g));
-    return std::shared_ptr<gcn::Image>(jimg);
+    auto sp = std::shared_ptr<gcn::Image>(jimg);
+    s_jimage_cache.emplace(k, sp);
+    return sp;
 }
 
 /* ---------------- Color ---------------- */
@@ -447,15 +499,65 @@ static int Container_clear(lua_State *L) {
 
 /* ---------------- MenuScreen ---------------- */
 
+static void log_lua_site(lua_State *L, const char *tag, void *ptr) {
+    lua_Debug ar;
+    /* Dump ALL frames at every level so we can see what's actually
+     * on the Lua stack at the time of this binding call. */
+    uart_puts(tag); uart_puts(" ptr=");
+    uart_puthex((unsigned)(uintptr_t)ptr);
+    int level = 0;
+    int found = 0;
+    while (lua_getstack(L, level, &ar)) {
+        found = 1;
+        if (lua_getinfo(L, "Sln", &ar)) {
+            uart_puts(" L"); uart_putdec((unsigned)level);
+            uart_puts("=");
+            uart_puts(ar.source ? ar.source : "(null)");
+            uart_puts(":");
+            uart_putdec((unsigned)ar.currentline);
+            if (ar.name) { uart_puts("("); uart_puts(ar.name); uart_puts(")"); }
+        }
+        level++;
+        if (level > 8) { uart_puts(" ..."); break; }
+    }
+    if (!found) uart_puts(" <empty-stack>");
+    uart_puts("\n");
+}
+extern "C" unsigned int libc_shim_heap_used(void);
+extern "C" unsigned int war1_live_jupiter_images(void);
+extern "C" unsigned long war1_live_jupiter_image_bytes(void);
+/* Drop registry[<menu>] from war1_widget_children so the menu's child
+ * widgets become Lua-GC-eligible. Without this, every briefing's bg1
+ * / bg2 / animation widgets stay pinned (strong-keyed registry),
+ * keeping their CGraphic shared_ptrs alive forever — visible as
+ * accumulating heap + visual corruption + video-pipeline hang after
+ * many mission loads. */
+static void clear_widget_registry_for(lua_State *L, int menu_idx) {
+    static const char *kChildRegistry = "war1_widget_children";
+    lua_getfield(L, LUA_REGISTRYINDEX, kChildRegistry);
+    if (lua_istable(L, -1)) {
+        lua_pushvalue(L, menu_idx);
+        lua_pushnil(L);
+        lua_rawset(L, -3);
+    }
+    lua_pop(L, 1);
+}
 static int MenuScreen_new(lua_State *L) {
-    (void)L;
     auto *m = new ::MenuScreen();
+    /* C diagnostic: heap_used is monotonic high-water (blind to live
+     * leaks); jimg=N bytes=B is the honest in-use ARGB-buffer count. */
+    uart_puts("[MS] new heap="); uart_putdec(libc_shim_heap_used());
+    uart_puts(" jimg="); uart_putdec(war1_live_jupiter_images());
+    uart_puts(" jimg_bytes="); uart_putdec((unsigned)war1_live_jupiter_image_bytes());
+    uart_puts("\n");
+    log_lua_site(L, "[MS] new from", m);
     tolua_pushusertype(L, m, "MenuScreen");
     return 1;
 }
 static int MenuScreen_run(lua_State *L) {
     auto *m = self<::MenuScreen>(L, 1);
     bool loop = lua_isboolean(L, 2) ? lua_toboolean(L, 2) : true;
+    log_lua_site(L, "[MS] run from", m);
     int r = m ? m->run(loop) : 0;
     lua_pushinteger(L, r);
     return 1;
@@ -463,13 +565,19 @@ static int MenuScreen_run(lua_State *L) {
 static int MenuScreen_stop(lua_State *L) {
     auto *m = self<::MenuScreen>(L, 1);
     int r = opt_int(L, 2, 0);
+    log_lua_site(L, "[MS] stop from", m);
+    clear_widget_registry_for(L, 1);
     if (m) m->stop(r);
+    uart_puts("[MS] stop heap="); uart_putdec(libc_shim_heap_used()); uart_puts("\n");
     return 0;
 }
 static int MenuScreen_stopAll(lua_State *L) {
     auto *m = self<::MenuScreen>(L, 1);
     int r = opt_int(L, 2, 0);
+    log_lua_site(L, "[MS] stopAll from", m);
+    clear_widget_registry_for(L, 1);
     if (m) m->stopAll(r);
+    uart_puts("[MS] stopAll heap="); uart_putdec(libc_shim_heap_used()); uart_puts("\n");
     return 0;
 }
 static int MenuScreen_addLogicCallback(lua_State *L) {
@@ -1021,9 +1129,19 @@ static int LuaActionListener_new(lua_State *L) {
     }
     /* lua_Object is the absolute stack index of the function. */
     auto *al = new LuaActionListener(L, b);
-    tolua_pushusertype_and_takeownership(L, al, "LuaActionListener");
+    /* A1: push WITHOUT takeownership so Lua GC never deletes the
+     * listener. Widgets keep raw pointers to listeners; with widgets
+     * themselves never destructed in our embed, freeing the listener
+     * dangles those raw pointers and the next Gui->logic() crashes.
+     * Bounded leak (one listener per button per session) is much
+     * better than the unbounded UAF. */
+    tolua_pushusertype(L, al, "LuaActionListener");
     return 1;
 }
+/* LuaActionListener_collect intentionally unreachable now that
+ * LuaActionListener is no longer takeownership'd — kept for parity
+ * with the tolua collect-fn signature in case we ever want to wire a
+ * deferred-cleanup hook here. */
 static int LuaActionListener_collect(lua_State *L) {
     delete reinterpret_cast<LuaActionListener *>(tolua_tousertype(L, 1, nullptr));
     return 0;

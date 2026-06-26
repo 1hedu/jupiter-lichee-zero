@@ -478,6 +478,95 @@ static std::stack< ::MenuScreen * > MenuStack;
 extern "C" volatile uint32_t g_war1_frame_counter;
 static uint32_t s_menu_open_frame = 0;
 
+/* C1: track every live MenuScreen so the main-loop sweep can find
+ * orphans (menu objects no longer on MenuStack and no longer Gui top
+ * means Lua has dropped the reference) and tear down their widget
+ * subtrees — freeing the ARGB buffers JupiterImage holds. The menu
+ * object itself stays alive (Lua userdata for it may still be
+ * out-of-scope-but-not-yet-GC'd; deleting the C++ pointer underneath
+ * a still-cached tolua_ubox entry is the use-after-free path the doc
+ * warns about). We just empty the menu's container. */
+#include <set>
+#include <list>
+#include <guisan/focushandler.hpp>
+#include <guisan/widgets/container.hpp>
+extern "C" void war1_jimg_cache_evict_orphans(void);
+static std::set<::MenuScreen *> s_live_menus;
+static std::set<::MenuScreen *> s_swept_menus;
+static unsigned int g_ms_ctor_count = 0;
+
+/* Depth-first widget deletion. Removes children from parent's
+ * mWidgets BEFORE deleting them so gcn::Widget::~Widget doesn't
+ * iterate-and-poke an inconsistent list. Clears focus to keep the
+ * FocusHandler from holding a dangling pointer. Listeners (A1) leak
+ * intentionally, so we don't try to unregister them — the raw
+ * pointers in mActionListeners/etc. just go away with the widget. */
+static void delete_widget_subtree(gcn::Widget *w)
+{
+    if (auto *c = dynamic_cast<gcn::Container *>(w)) {
+        /* Copy because remove() mutates the underlying list. */
+        std::list<gcn::Widget *> kids(c->getChildren().begin(), c->getChildren().end());
+        for (auto *kid : kids) {
+            c->remove(kid);
+            delete_widget_subtree(kid);
+        }
+    }
+    if (auto *fh = w->_getFocusHandler()) {
+        if (fh->getFocused() == w) fh->focusNone();
+    }
+    delete w;
+}
+
+/* Tear down a dead menu's widget subtree. Does NOT delete the menu
+ * itself — Lua userdata may still cache the pointer (tolua_ubox
+ * lookup hits even after Lua GC of the userdata, until next gc
+ * cycle); deleting the C++ pointer underneath would create the
+ * stale-cached-userdata hazard the diagnosis doc flags as the
+ * "teardown the codebase has repeatedly gotten wrong." */
+static void teardown_dead_menu(::MenuScreen *m)
+{
+    std::list<gcn::Widget *> kids(m->getChildren().begin(), m->getChildren().end());
+    for (auto *kid : kids) {
+        m->remove(kid);
+        delete_widget_subtree(kid);
+    }
+    /* logiclistener is private and (with A1) leaks forever — the raw
+     * pointer stays valid since LuaActionListener objects are never
+     * GC'd anymore. Safe to leave dangling-but-valid. */
+}
+
+/* Public sweep — call once per game-loop tick (cheap; iterates a
+ * small set). Frees the ARGB-heavy contents of menus that Lua has
+ * dropped and that aren't being drawn anymore. After freeing
+ * widgets, evict jimg cache entries no live widget references. */
+extern "C" void war1_menu_subtree_sweep(void)
+{
+    if (!Gui) return;
+    gcn::Widget *top = Gui->getTop();
+    bool any_swept = false;
+    for (auto it = s_live_menus.begin(); it != s_live_menus.end(); ) {
+        ::MenuScreen *m = *it;
+        if (m == top) { ++it; continue; }
+        bool on_stack = false;
+        {
+            std::stack< ::MenuScreen * > tmp = MenuStack;
+            while (!tmp.empty()) {
+                if (tmp.top() == m) { on_stack = true; break; }
+                tmp.pop();
+            }
+        }
+        if (on_stack) { ++it; continue; }
+        teardown_dead_menu(m);
+        s_swept_menus.insert(m);
+        it = s_live_menus.erase(it);
+        any_swept = true;
+    }
+    if (any_swept) {
+        war1_jimg_cache_evict_orphans();
+        uart_puts("[SW] swept "); uart_putdec((unsigned)s_swept_menus.size());
+        uart_puts(" total\n");
+    }
+}
 ::MenuScreen::MenuScreen() : gcn::Container(), runLoop(true)
 {
     setDimension(gcn::Rectangle(0, 0, Video.Width, Video.Height));
@@ -489,6 +578,13 @@ static uint32_t s_menu_open_frame = 0;
     } else {
         oldtop = nullptr;
     }
+    s_live_menus.insert(this);
+    g_ms_ctor_count++;
+    uart_puts("[MS] ctor #"); uart_putdec(g_ms_ctor_count);
+    uart_puts(" this="); uart_puthex((unsigned)(uintptr_t)this);
+    uart_puts(" oldtop="); uart_puthex((unsigned)(uintptr_t)oldtop);
+    uart_puts(" stack="); uart_putdec((unsigned)MenuStack.size());
+    uart_puts("\n");
 }
 
 int ::MenuScreen::run(bool loop)
@@ -522,7 +618,18 @@ void ::MenuScreen::stop(int result, bool stopAll)
     if (now - s_menu_open_frame < 5 && !stopAll) {
         return;
     }
-    if (Gui) {
+    uart_puts("[MS] stop this="); uart_puthex((unsigned)(uintptr_t)this);
+    uart_puts(" oldtop="); uart_puthex((unsigned)(uintptr_t)this->oldtop);
+    uart_puts(" stack="); uart_putdec((unsigned)MenuStack.size());
+    uart_puts(" stopAll="); uart_putdec(stopAll ? 1u : 0u);
+    uart_puts("\n");
+    /* Only restore oldtop if it was non-null when this menu was opened.
+     * If oldtop was captured as nullptr (e.g. WarMenu constructed during
+     * a state where no parent top widget was set), do NOT clobber the
+     * current top with null — that would just make the next
+     * DrawGuichanWidgets() call throw "No top widget set" in gcn::Gui::draw.
+     * Leave whatever's currently on top alone. */
+    if (Gui && this->oldtop) {
         Gui->setTop(this->oldtop);
     }
     if (!MenuStack.empty() && MenuStack.top() == this) {
@@ -572,8 +679,15 @@ extern "C" void war1_close_active_menu(void)
     if (!MenuStack.empty()) {
         ::MenuScreen *m = MenuStack.top();
         if (m) m->stop(0, true /*stopAll*/);
+        /* stop() with stopAll already restored Gui->top to the menu's
+         * oldtop. The previous unconditional Gui->setTop(nullptr) here
+         * was destructive — it wiped the just-restored top, leaving
+         * every subsequent StartMap to capture oldTop=null and
+         * cascading the null-top state through every WarMenu created
+         * thereafter (briefings, etc.). The accumulating corruption
+         * across level-loads (lost cursor, garbage portraits behind
+         * menus) traces back to this line. */
     }
-    Gui->setTop(nullptr);
 }
 
 /* Click dispatch — bypasses gcn::Gui::distributeMouseEvent (which hangs

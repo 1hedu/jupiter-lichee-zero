@@ -69,6 +69,9 @@
 #include "guisan/mouseinput.hpp"
 #include "guisan/mouselistener.hpp"
 #include "guisan/widget.hpp"
+#include <cstdint>
+extern "C" void uart_puts(const char *);
+extern "C" void uart_puthex(unsigned int);
 
 #include <algorithm>
 
@@ -89,6 +92,17 @@ namespace gcn
 
     void Gui::setTop(Widget* top)
     {
+        /* DIAG: log every setTop with caller LR, prev top, and new top.
+         * Track who nulls mTop between briefing-end and the next draw. */
+        void *lr = __builtin_return_address(0);
+        uart_puts("[setTop] from=");
+        uart_puthex((unsigned)(uintptr_t)lr);
+        uart_puts(" prev=");
+        uart_puthex((unsigned)(uintptr_t)mTop);
+        uart_puts(" new=");
+        uart_puthex((unsigned)(uintptr_t)top);
+        uart_puts("\n");
+
         if (mTop != nullptr)
         {
             mTop->_setFocusHandler(nullptr);
@@ -151,7 +165,14 @@ namespace gcn
     {
         if (mTop == nullptr)
         {
-            throw GCN_EXCEPTION("No top widget set");
+            /* Tolerate null top — defense-in-depth against any code path
+             * that leaves Gui without a top widget. Upstream throws here;
+             * for bare-metal we'd rather skip the frame than abort. */
+            void *lr = __builtin_return_address(0);
+            uart_puts("[draw] skip (mTop=null) from=");
+            uart_puthex((unsigned)(uintptr_t)lr);
+            uart_puts("\n");
+            return;
         }
         if (mGraphics == nullptr)
         {

@@ -166,7 +166,12 @@ function Briefing(title, objs, bgImg, mapbg, mapVideo, text, voices)
   end
 
   print("[brief] making LuaActionListener")
-  listener = LuaActionListener(animateHeads)
+  -- D: was global `listener = ...` — that wrote _G.listener and got
+  -- overwritten by the next briefing's run, defeating the logic-callback
+  -- anchor for the prior briefing. Local-scope it so each Briefing's
+  -- listener is independent. (Note: even with A1, this is the right
+  -- scoping; we don't want briefings sharing a global slot.)
+  local listener = LuaActionListener(animateHeads)
   menu:addLogicCallback(listener)
   print("[brief] addLogicCallback ok")
 

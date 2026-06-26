@@ -34,6 +34,7 @@ extern "C" {
     void uart_puts(const char *);
     void uart_putdec(unsigned);
     unsigned libc_shim_heap_used(void);
+    void war1_menu_subtree_sweep(void);
 }
 
 //----------------------------------------------------------------------------
@@ -291,12 +292,23 @@ static void GameLogicLoop()
 		SinglePlayerReplayEachCycle();
 		++GameCycle;
 		MultiPlayerReplayEachCycle();
+		/* Per-stage tick — gated to every 8th cycle (~3 Hz at 30 fps).
+		 * On hang, the last "[ST] enter <name>" before silence pinpoints
+		 * which subsystem is stuck. */
+		bool log_stages = ((GameCycle & 0x7) == 0);
+		if (log_stages) { uart_puts("[ST] cyc="); uart_putdec((unsigned)GameCycle); uart_puts(" Net\n"); }
 		NetworkCommands();
+		if (log_stages) { uart_puts("[ST] Trig\n"); }
 		TriggersEachCycle();
+		if (log_stages) { uart_puts("[ST] Units\n"); }
 		UnitActions();
+		if (log_stages) { uart_puts("[ST] Miss\n"); }
 		MissileActions();
+		if (log_stages) { uart_puts("[ST] Players\n"); }
 		PlayersEachCycle();
+		if (log_stages) { uart_puts("[ST] Timer\n"); }
 		UpdateTimer();
+		if (log_stages) { uart_puts("[ST] Sec\n"); }
 
 
 		//
@@ -309,6 +321,14 @@ static void GameLogicLoop()
 		// Check game goals.
 		// Check rescue of units.
 		//
+		/* C1 sweep DISABLED — deleting a dead briefing's widget
+		 * subtree at cycle 32 hung the game on next cursor move:
+		 * FocusHandler still held mDraggedWidget/mLastWidgetWithMouse/
+		 * mLastWidgetPressed (and ContainerListeners + death listeners)
+		 * pointing at the freed widgets. Calling FocusHandler::remove
+		 * per widget would cover the focus pointers but not the other
+		 * cross-references. Re-enable only after a proper atomic
+		 * teardown is wired (see menu_lifetime_diagnosis.md §C1). */
 		switch (GameCycle % CYCLES_PER_SECOND) {
 			case 0: // At cycle 0, start all ai players...
 				if (GameCycle == 0) {

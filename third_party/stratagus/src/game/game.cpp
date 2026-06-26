@@ -120,9 +120,15 @@ void SaveGameSettings(CFile &file)
 /// forward declaration
 void CreateGame(const fs::path &filename, CMap *map);
 
+extern "C" void uart_puts(const char *);
+extern "C" void uart_puthex(unsigned int);
+extern "C" void uart_putdec(unsigned int);
 void StartMap(const std::string &filename, bool clean)
 {
 	gcn::Widget *oldTop = Gui->getTop();
+	uart_puts("[SM] StartMap enter file="); uart_puts(filename.c_str());
+	uart_puts(" oldTop="); uart_puthex((unsigned)(uintptr_t)oldTop);
+	uart_puts("\n");
 	auto container = std::make_unique<gcn::Container>();
 	container->setDimension(gcn::Rectangle(0, 0, Video.Width, Video.Height));
 	container->setOpaque(false);
@@ -153,6 +159,7 @@ void StartMap(const std::string &filename, bool clean)
 	InterfaceState = IfaceState::Menu;
 	SetDefaultTextColors(nc, rc);
 
+	uart_puts("[SM] StartMap exit -> setTop(oldTop="); uart_puthex((unsigned)(uintptr_t)oldTop); uart_puts(")\n");
 	Gui->setTop(oldTop);
 }
 

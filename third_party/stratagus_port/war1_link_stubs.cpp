@@ -399,9 +399,6 @@ void CGraphic::DrawSubClip(int gx, int gy, int w, int h, int x, int y, SDL_Surfa
     war1_blit_subrect_via_pc8(this, gx, gy, w, h, x, y);
 }
 void CGraphic::Flip() {}
-std::shared_ptr<CGraphic> CGraphic::ForceNew(std::string const &file, int w, int h) {
-    return CGraphic::New(file, w, h);
-}
 void CGraphic::GenFramesMap() {}
 void CGraphic::Load(bool) {}
 void CGraphic::MakeShadow(Vec2T<int>) {}
@@ -416,16 +413,66 @@ extern "C" int war1_register_graphic_by_path(const CGraphic *g, const char *path
  * the pc8 blit bridge), so without this any CursorByIdent / filler /
  * icon lookup that gates on IsLoaded skips every entry. */
 static SDL_Surface s_war1_dummy_surface = {};
+/* B1: dedup CGraphic::New by (path, w, h). Without this, every call
+ * (incl. per-briefing transient locals like bg1/bg2) allocates a fresh
+ * CGraphic that gets appended to the append-only g_pc8_registry; when
+ * GC frees the CGraphic, the registry's raw pointer goes stale and
+ * dlmalloc address-reuse causes wrong-sprite blits (visual corruption,
+ * stretched portraits) and eventually the 2048-slot overflow (all-black
+ * terrain). Restoring upstream's dedup semantics removes the churn at
+ * the source. */
+#include <map>
+/* B1: std::map (tree, no bucket arrays) instead of unordered_map —
+ * the latter's first-insert bucket allocation triggered
+ * std::bad_array_new_length early in Stratagus init under our
+ * arm-none-eabi-gcc 14.2 + libstdc++ build, before any cached
+ * CGraphic was ever requested. std::map<string,unique_ptr<X>> is
+ * already used widely in upstream Stratagus (ButtonStyleHash, the
+ * MissileTypeMap, etc.) and works here. */
+static std::map<std::string, std::shared_ptr<CGraphic>> s_graphic_cache;
+static std::map<std::string, std::shared_ptr<CPlayerColorGraphic>> s_player_color_graphic_cache;
+static std::string graphic_cache_key(std::string const &file, int w, int h) {
+    char dim[32]; int n = 0;
+    /* compact "|WxH" suffix without pulling <sstream> */
+    int u = (w < 0) ? -w : w;
+    char buf[16]; int bi = 0;
+    do { buf[bi++] = '0' + (u % 10); u /= 10; } while (u && bi < 15);
+    dim[n++] = '|';
+    if (w < 0) dim[n++] = '-';
+    while (bi > 0) dim[n++] = buf[--bi];
+    dim[n++] = 'x';
+    u = (h < 0) ? -h : h; bi = 0;
+    do { buf[bi++] = '0' + (u % 10); u /= 10; } while (u && bi < 15);
+    if (h < 0) dim[n++] = '-';
+    while (bi > 0) dim[n++] = buf[--bi];
+    dim[n] = '\0';
+    return file + dim;
+}
 std::shared_ptr<CGraphic> CGraphic::New(std::string const &file, int w, int h) {
+    std::string key = graphic_cache_key(file, w, h);
+    auto it = s_graphic_cache.find(key);
+    if (it != s_graphic_cache.end()) return it->second;
     auto g = std::make_shared<CGraphic>();
     g->File = file;
     g->Width = w;
     g->Height = h;
     g->mSurface = &s_war1_dummy_surface;
     g->SurfaceFlip = &s_war1_dummy_surface;
-    /* Try to bind to an embedded .pc8 blob. If path isn't in the catalog
-     * (e.g. editor-only assets we didn't embed), the CGraphic stays empty
-     * and DrawFrameClip is a no-op. */
+    war1_register_graphic_by_path(g.get(), file.c_str());
+    s_graphic_cache.emplace(std::move(key), g);
+    return g;
+}
+/* B1: ForceNew skips the dedup cache so callers that need a *distinct*
+ * CGraphic (e.g. guichan.lua:16 wanting a gray-tinted copy of a shared
+ * background) still get a fresh instance. The fresh instance does add
+ * one g_pc8_registry slot, but ForceNew callers are rare. */
+std::shared_ptr<CGraphic> CGraphic::ForceNew(std::string const &file, int w, int h) {
+    auto g = std::make_shared<CGraphic>();
+    g->File = file;
+    g->Width = w;
+    g->Height = h;
+    g->mSurface = &s_war1_dummy_surface;
+    g->SurfaceFlip = &s_war1_dummy_surface;
     war1_register_graphic_by_path(g.get(), file.c_str());
     return g;
 }
@@ -450,6 +497,9 @@ void CPlayerColorGraphic::DrawPlayerColorFrameClipX(int /*colorIdx*/, unsigned i
     war1_blit_via_pc8_flipx(this, frame, x, y);
 }
 std::shared_ptr<CPlayerColorGraphic> CPlayerColorGraphic::New(std::string const &file, int w, int h) {
+    std::string key = graphic_cache_key(file, w, h);
+    auto it = s_player_color_graphic_cache.find(key);
+    if (it != s_player_color_graphic_cache.end()) return it->second;
     auto g = std::make_shared<CPlayerColorGraphic>();
     g->File = file;
     g->Width = w;
@@ -457,6 +507,7 @@ std::shared_ptr<CPlayerColorGraphic> CPlayerColorGraphic::New(std::string const 
     g->mSurface = &s_war1_dummy_surface;
     g->SurfaceFlip = &s_war1_dummy_surface;
     war1_register_graphic_by_path(g.get(), file.c_str());
+    s_player_color_graphic_cache.emplace(std::move(key), g);
     return g;
 }
 
@@ -1457,6 +1508,7 @@ extern "C" uint32_t libc_shim_heap_size(void);
 } /* close prior extern "C" so the includes can compile */
 #include <system_error>
 #include <cstring>
+#include <guisan/exception.hpp>
 extern "C" {
 /* --wrap=__cxa_throw: log + forward to the real __cxa_throw. Freezing here
  * breaks static-init ctors that throw catchable exceptions internally. */
@@ -1479,6 +1531,20 @@ void __wrap___cxa_throw(void *thrown, void *tinfo, void (*dtor)(void *)) {
         const char *msg = se->what();
         uart_puts(" what=");
         uart_puts(msg ? msg : "(null)");
+    }
+    /* gcn::Exception has no vptr — accessors return string members directly.
+     * Print message + filename:line + function so we can see which guisan
+     * invariant fired. */
+    if (thrown && tn && strstr(tn, "gcn") && strstr(tn, "Exception")) {
+        gcn::Exception *ex = reinterpret_cast<gcn::Exception *>(thrown);
+        uart_puts(" what=");
+        uart_puts(ex->getMessage().c_str());
+        uart_puts(" at=");
+        uart_puts(ex->getFilename().c_str());
+        uart_puts(":");
+        uart_putdec(ex->getLine());
+        uart_puts(" fn=");
+        uart_puts(ex->getFunction().c_str());
     }
     uart_puts(" heap_used=");
     uart_putdec(libc_shim_heap_used());
@@ -1961,7 +2027,16 @@ void CGraphic::OverlayGraphic(CGraphic *, bool) {}
 std::shared_ptr<CGraphic> CGraphic::Get(std::string const &) { return nullptr; }
 std::shared_ptr<CPlayerColorGraphic> CPlayerColorGraphic::Get(std::string const &) { return nullptr; }
 std::shared_ptr<CPlayerColorGraphic> CPlayerColorGraphic::ForceNew(std::string const &file, int w, int h) {
-    return CPlayerColorGraphic::New(file, w, h);
+    /* B1: same as CGraphic::ForceNew — bypass cache, return a distinct
+     * instance. (Rare; mostly the menu/title gray-tint case.) */
+    auto g = std::make_shared<CPlayerColorGraphic>();
+    g->File = file;
+    g->Width = w;
+    g->Height = h;
+    g->mSurface = &s_war1_dummy_surface;
+    g->SurfaceFlip = &s_war1_dummy_surface;
+    war1_register_graphic_by_path(g.get(), file.c_str());
+    return g;
 }
 
 /* ==== UI bindings support (script_ui.cpp pulls these in) ==== */

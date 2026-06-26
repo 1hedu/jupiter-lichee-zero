@@ -138,6 +138,8 @@
 ----------------------------------------------------------------------------*/
 
 #include "stratagus.h"
+extern "C" void uart_puts(const char *);
+extern "C" void uart_putdec(unsigned int);
 
 #include "ai.h"
 #include "ai_local.h"
@@ -1024,11 +1026,17 @@ void AiEachSecond(CPlayer &player)
 	}
 #endif
 
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" Script\n");
 	AiExecuteScript();
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" Units\n");
 	AiCheckUnits();
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" Res\n");
 	AiResourceManager();
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" Force\n");
 	AiForceManager();
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" Magic\n");
 	AiCheckMagic();
+	uart_puts("[AI] p="); uart_putdec((unsigned)player.Index); uart_puts(" done\n");
 
 	// At most 1 explorer each 5 seconds
 	if (GameCycle > AiPlayer->LastExplorationGameCycle + 5 * CYCLES_PER_SECOND) {

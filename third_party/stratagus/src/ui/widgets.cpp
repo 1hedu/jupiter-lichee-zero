@@ -2605,6 +2605,10 @@ int StatBoxWidget::getPercent() const
 /**
 **  MenuScreen constructor
 */
+extern "C" void uart_puts(const char *);
+extern "C" void uart_puthex(unsigned int);
+extern "C" void uart_putdec(unsigned int);
+static unsigned int g_ms_ctor_count = 0;
 MenuScreen::MenuScreen() : Container(), runLoop(true)
 {
 	setDimension(gcn::Rectangle(0, 0, Video.Width, Video.Height));
@@ -2614,6 +2618,13 @@ MenuScreen::MenuScreen() : Container(), runLoop(true)
 	// when they are added to the container
 	oldtop = Gui->getTop();
 	Gui->setTop(this);
+
+	g_ms_ctor_count++;
+	uart_puts("[MS] ctor #"); uart_putdec(g_ms_ctor_count);
+	uart_puts(" this="); uart_puthex((unsigned)(uintptr_t)this);
+	uart_puts(" oldtop="); uart_puthex((unsigned)(uintptr_t)oldtop);
+	uart_puts(" stack="); uart_putdec((unsigned)MenuStack.size());
+	uart_puts("\n");
 }
 
 /**

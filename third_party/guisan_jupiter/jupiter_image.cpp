@@ -3,6 +3,18 @@
 #include <cstdlib>
 #include <cstring>
 
+/* C diagnostic — live JupiterImage count. The counter operates only
+ * on already-constructed objects (post-ctor body, pre-dtor body), so
+ * incrementing/decrementing it isn't on any allocation path. The
+ * earlier version that placed the counter inside the ctor's
+ * member-init region appears to have interacted badly with global
+ * static-init order (boot died with std::bad_array_new_length very
+ * early), so we expose it via post-ctor/dtor hook functions instead. */
+static unsigned int g_live_jupiter_images = 0;
+static unsigned long g_live_jupiter_image_bytes = 0;
+extern "C" unsigned int war1_live_jupiter_images(void) { return g_live_jupiter_images; }
+extern "C" unsigned long war1_live_jupiter_image_bytes(void) { return g_live_jupiter_image_bytes; }
+
 namespace gcn {
 
 JupiterImage::JupiterImage(int width, int height)
@@ -11,12 +23,19 @@ JupiterImage::JupiterImage(int width, int height)
         mPixels = (uint32_t *)std::malloc(sizeof(uint32_t) * width * height);
         if (mPixels) std::memset(mPixels, 0, sizeof(uint32_t) * width * height);
     }
+    g_live_jupiter_images++;
+    if (mPixels) g_live_jupiter_image_bytes += (unsigned long)width * height * 4;
 }
 
 JupiterImage::JupiterImage(int width, int height, uint32_t *pixels, bool ownsPixels)
-    : mWidth(width), mHeight(height), mPixels(pixels), mOwnsPixels(ownsPixels) {}
+    : mWidth(width), mHeight(height), mPixels(pixels), mOwnsPixels(ownsPixels) {
+    g_live_jupiter_images++;
+    if (mPixels && mOwnsPixels) g_live_jupiter_image_bytes += (unsigned long)width * height * 4;
+}
 
 JupiterImage::~JupiterImage() {
+    if (mPixels && mOwnsPixels) g_live_jupiter_image_bytes -= (unsigned long)mWidth * mHeight * 4;
+    g_live_jupiter_images--;
     free();
 }
 

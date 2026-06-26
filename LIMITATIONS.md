@@ -182,6 +182,46 @@ registers via `v3s.h` — but no SDK API exists.
   per-track memory is leaked instead of recycled. Reboot for next track.
 - `scaler_probe` is for SDK developers, not users — confirms VSU is
   not in silicon.
+- **WC1 long-session degradation: ARGB widget leak (~1.2 MB per
+  distinct briefing).** The Stratagus port routes briefing artwork
+  through `gcn::ImageWidget` / `JupiterImage`; widgets are never
+  destructed (tolua `pushusertype` without `takeownership` + no C++
+  delete path), so each distinct mission's briefing leaks its bg
+  buffer + map buffer + animation strips, totaling ~1.2 MB per
+  briefing-with-video. With ~10.5 MB headroom over the ~26 MB baseline,
+  arena exhaustion → `morecore` returns -1 → unguarded `new` failure
+  → `_exit`'s `for(;;);` hang after ~8 distinct briefings.
+
+  Mitigations shipped (commit on top of `0c94a25`):
+  - **B1** — `CGraphic::New` dedups by `(path, w, h)` via `std::map`
+    cache (was: fresh CGraphic per call → `g_pc8_registry` stale
+    pointers + 2048-slot overflow → "wrong-sprite blits" and
+    "all-black terrain" symptoms).
+  - **C2** — `arg_to_image` caches `JupiterImage` by `(CGraphic*, outW,
+    outH)`. Same image across many briefings now shares one ARGB
+    buffer instead of N — eliminates the *replay* leak.
+  - **A1** — `LuaActionListener` pushed without `takeownership` so
+    GC can't free it while widgets still hold raw pointers; closes
+    the listener UAF that earlier registry-clear changes had opened.
+  - **D** — Briefing's `listener` local-scoped instead of leaking to
+    `_G.listener` and getting overwritten by the next briefing.
+
+  Not yet fixed:
+  - **C1** — atomic widget-subtree teardown for dead menus. The
+    obvious implementation hangs the game on next cursor move because
+    `gcn::FocusHandler` holds 7 widget pointers (mFocused / mDragged
+    / mLastWidgetWithMouse / mLastWidgetWithModalFocus /
+    mLastWidgetWithModalMouseInputFocus / mLastWidgetPressed / its
+    `mWidgets` list) that go dangling, plus `ContainerListener` and
+    death-listener registrations. The sweep function (and its call
+    site in `mainloop.cpp`) is compiled in but not invoked. Re-enable
+    after the cross-reference cleanup is wired (see the WC1
+    `menu_lifetime_diagnosis.md` doc).
+
+  Net: a single campaign playthrough (~24 distinct briefings) will
+  still eventually OOM-hang. Repeated mission loads of the *same*
+  mission no longer leak. Power-cycle between long sessions if you
+  intend to grind many distinct briefings back-to-back.
 
 ## Out of scope (deliberate)
 
