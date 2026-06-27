@@ -14,10 +14,10 @@ set(PICODVI_PATH ${CMAKE_CURRENT_LIST_DIR}/external/PicoDVI/software
 add_subdirectory(${PICODVI_PATH}/libdvi libdvi)
 
 add_executable(mercury
-    src/mars_main.c
-    src/mars_raster.c
-    src/mars_displaylist.c
-    src/mars_spi.c
+    src/mercury_main.c
+    src/mercury_raster.c
+    src/mercury_displaylist.c
+    src/mercury_spi.c
     src/dvi_out.c
 )
 

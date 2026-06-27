@@ -48,13 +48,13 @@
 #define CSI_INT_FRAME_DONE      (1u << 1)
 
 /* Supported capture resolutions (match Pico output) */
-#define MARS_RES_GB       0   /* 160×144 */
-#define MARS_RES_NES      1   /* 256×224 */
-#define MARS_RES_SNES     2   /* 256×224 */
-#define MARS_RES_GENESIS  3   /* 320×224 */
-#define MARS_RES_LCD      4   /* 480×272 */
+#define MERCURY_RES_GB       0   /* 160×144 */
+#define MERCURY_RES_NES      1   /* 256×224 */
+#define MERCURY_RES_SNES     2   /* 256×224 */
+#define MERCURY_RES_GENESIS  3   /* 320×224 */
+#define MERCURY_RES_LCD      4   /* 480×272 */
 
-static const struct { uint16_t w, h; } mars_resolutions[] = {
+static const struct { uint16_t w, h; } mercury_resolutions[] = {
     {160, 144},   /* GB */
     {256, 224},   /* NES */
     {256, 224},   /* SNES */
@@ -63,7 +63,7 @@ static const struct { uint16_t w, h; } mars_resolutions[] = {
 };
 
 /* R3G3B2 → ARGB8888 expansion */
-static inline void mars_r3g3b2_to_argb(uint32_t *dst, const uint8_t *src,
+static inline void mercury_r3g3b2_to_argb(uint32_t *dst, const uint8_t *src,
                                         uint32_t w, uint32_t h)
 {
     uint32_t count = w * h;
@@ -96,7 +96,7 @@ static inline void csi_gpio_init(void) { }
  * Initialize CSI0 for MIPI CSI-2 capture at the specified resolution.
  *
  * buf_addr: physical DRAM address, 4-byte aligned.
- * res: one of MARS_RES_* constants.
+ * res: one of MERCURY_RES_* constants.
  *
  * TODO: MIPI PHY configuration (lane count, data rate, protocol setup).
  * Needs Linux register dump with TC358743 connected to get exact values.
@@ -104,8 +104,8 @@ static inline void csi_gpio_init(void) { }
 static inline void csi_capture_init(uint32_t buf_addr, int res)
 {
     volatile uint32_t *csi = (volatile uint32_t *)CSI_BASE;
-    uint16_t w = mars_resolutions[res].w;
-    uint16_t h = mars_resolutions[res].h;
+    uint16_t w = mercury_resolutions[res].w;
+    uint16_t h = mercury_resolutions[res].h;
 
     csi[CSI_EN / 4] = 0;
     csi[CSI_CFG / 4] = CSI_CFG_INPUT_FMT(0) | CSI_CFG_OUTPUT_FMT(0);

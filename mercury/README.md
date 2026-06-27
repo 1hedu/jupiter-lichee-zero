@@ -2,8 +2,6 @@
 
 A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, outputting frames over parallel CSI to the Allwinner V3s. Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
 
-**Naming**: externally **Mercury** (Roman messenger god, smallest planet, fast companion to Jupiter). Internally codenamed **Mars** in the source tree (`mars_*.c`, `jupiter32x.h`) as a direct tribute to the Sega 32X — whose own internal Sega codename was *Mars*, and which this project closely parallels in architecture (small accelerator adding 3D to a 2D host).
-
 ## Architecture
 
 ```
@@ -113,26 +111,26 @@ Flash `mercury.uf2` to the Pico via USB drag-and-drop.
 
 ## V3s Integration
 
-On the V3s Jupiter SDK side, add `v3s_side/mars_csi_capture.h` to your build:
+On the V3s Jupiter SDK side, add `v3s_side/mercury_csi_capture.h` to your build:
 
 ```c
-#include "mars_csi_capture.h"
+#include "mercury_csi_capture.h"
 
 // During init:
 csi_clocks_init();
 csi_gpio_init();
-csi_capture_init(MARS_CAPTURE_BUF);  // physical DRAM address
+csi_capture_init(MERCURY_CAPTURE_BUF);  // physical DRAM address
 
 // In your main loop:
 if (csi_frame_ready()) {
-    // New frame from Pico is in MARS_CAPTURE_BUF
+    // New frame from Pico is in MERCURY_CAPTURE_BUF
     // Convert R3G3B2 → ARGB8888 and map to DE2 VI0
-    mars_r3g3b2_to_argb(vi0_fb, MARS_CAPTURE_BUF, 320, 224);
+    mercury_r3g3b2_to_argb(vi0_fb, MERCURY_CAPTURE_BUF, 320, 224);
     dcache_clean_range(vi0_fb, 320*224*4);
 }
 
 // Send display list to Pico:
-mars_spi_send(display_list_buf, display_list_len);
+mercury_spi_send(display_list_buf, display_list_len);
 ```
 
 ## File Map
@@ -146,13 +144,13 @@ mercury/
 ├── pio/
 │   └── csi_out.pio             PIO programs for pixel + sync output
 ├── src/
-│   ├── mars_main.c             Core 0 main: SPI recv + rasterize + self-test cube
-│   ├── mars_raster.c           Triangle/line/hline rasterizer, double-buffer swap
-│   ├── mars_displaylist.c      Display list command parser and dispatch
-│   ├── mars_spi.c              SPI slave receiver (hardware SPI1 + DMA)
+│   ├── mercury_main.c             Core 0 main: SPI recv + rasterize + self-test cube
+│   ├── mercury_raster.c           Triangle/line/hline rasterizer, double-buffer swap
+│   ├── mercury_displaylist.c      Display list command parser and dispatch
+│   ├── mercury_spi.c              SPI slave receiver (hardware SPI1 + DMA)
 │   └── csi_out.c               Core 1: PIO + DMA scanout loop
 └── v3s_side/
-    └── mars_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
+    └── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
 ```
 
 ## Performance
@@ -167,12 +165,6 @@ At 133MHz dual Cortex-M0+:
 
 This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons per frame, painter's algorithm sorting.
 
-## Why "Mars"
-
-The Sega 32X was codenamed **Mars**. It was a coprocessor that bolted onto the Genesis, adding a polygon-capable layer that the Genesis VDP couldn't render. The two SH-2 processors in the 32X did 3D rendering, the Genesis VDP continued doing 2D tiles and sprites, and the outputs were composited together.
-
-Mercury (codenamed *Mars* internally for that reason) does the same thing: a $4 coprocessor bolted onto the $6 main system, adding 3D polygon capability to a 2D retro SDK. Two processors, asymmetric architecture, layered output through a hardware compositor.
-
 ## Status / TODO
 
 ### Working
@@ -186,4 +178,4 @@ Mercury (codenamed *Mars* internally for that reason) does the same thing: a $4 
 - **MIPI CSI-2 PHY configuration on V3s** — `csi_capture_init()` sets up the CSI controller (buffer, size, interrupts) but does NOT configure the MIPI PHY (lane count, data rate, protocol layer). Need a Linux register dump with a real MIPI camera to get the exact PHY register sequence. Same approach used for audio codec and CedarVE.
 - **DVP-to-MIPI bridge chip selection and I2C config** — the bridge (e.g. TC358748) needs I2C register programming at init. Pin mapping, timing, and power sequencing TBD once hardware is in hand.
 - **Texture rendering** — CMD_TEXTURE uploads data but no rendering command references texture slots. Need CMD_TEXTRI or similar.
-- **R3G3B2→ARGB8888 NEON version** — `mars_r3g3b2_to_argb()` is scalar C. A NEON version could process 16 pixels per pass.
+- **R3G3B2→ARGB8888 NEON version** — `mercury_r3g3b2_to_argb()` is scalar C. A NEON version could process 16 pixels per pass.

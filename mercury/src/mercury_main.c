@@ -6,7 +6,7 @@
  *
  * The Pico is a stateless polygon GPU. The V3s sends scene commands,
  * the Pico rasterizes and streams pixels back through CSI.
- * Like the 32X was to the Genesis — Mars to Jupiter.
+ * Like the 32X was to the Genesis — Mercury to Jupiter.
  */
 
 #include <string.h>

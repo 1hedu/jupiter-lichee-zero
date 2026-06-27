@@ -29,7 +29,7 @@ static struct dvi_inst dvi0;
 static uint8_t black_line[J32X_DVI_H_ACTIVE];
 
 /* PicoDVI pin config for GP0-GP7 */
-static const struct dvi_serialiser_cfg mars_dvi_cfg = {
+static const struct dvi_serialiser_cfg mercury_dvi_cfg = {
     .pio = pio0,
     .sm_tmds = {0, 1, 2},
     .pins_tmds = {PIN_DVI_D0P, PIN_DVI_D1P, PIN_DVI_D2P},
@@ -40,7 +40,7 @@ static const struct dvi_serialiser_cfg mars_dvi_cfg = {
 void j32x_scanout_start(void)
 {
     dvi0.timing = &dvi_timing_640x480p_60hz;
-    dvi0.ser_cfg = mars_dvi_cfg;
+    dvi0.ser_cfg = mercury_dvi_cfg;
     dvi_init(&dvi0, next_striped_spin_lock_num(), next_striped_spin_lock_num());
 
     memset(black_line, 0, sizeof(black_line));
