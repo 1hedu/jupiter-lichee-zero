@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — V3s MIPI CSI-2 Capture Driver
+ * Mercury — V3s MIPI CSI-2 Capture Driver
  *
  * Captures frames from the Pico coprocessor via MIPI CSI-2.
  *

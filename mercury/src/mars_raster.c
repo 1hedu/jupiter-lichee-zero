@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — Flat-shaded triangle rasterizer
+ * Mercury — Flat-shaded triangle rasterizer
  *
  * Scanline-based, integer-only math, no division in inner loop.
  * Designed for Cortex-M0+ at 133MHz rendering Star Fox-class geometry.

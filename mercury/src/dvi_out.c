@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — PicoDVI Scanout
+ * Mercury — PicoDVI Scanout
  *
  * Runs on Core 1. Scans out the front framebuffer as DVI (HDMI) at
  * 640×480 @ 60Hz. The active area is J32X_WIDTH × J32X_HEIGHT,

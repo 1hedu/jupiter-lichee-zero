@@ -7,7 +7,7 @@ A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for
 ## Architecture
 
 ```
-V3s (Jupiter)                          Pico (Mars)
+V3s (Jupiter)                          Pico (Mercury)
 ┌──────────────┐    SPI (25MHz)    ┌──────────────┐
 │  Game logic  │ ───────────────── │  SPI slave   │
 │  2D VDP/PPU  │   display list    │              │
@@ -109,7 +109,7 @@ cmake ..
 make
 ```
 
-Flash `jupiter_mars.uf2` to the Pico via USB drag-and-drop.
+Flash `mercury.uf2` to the Pico via USB drag-and-drop.
 
 ## V3s Integration
 
@@ -171,9 +171,7 @@ This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons pe
 
 The Sega 32X was codenamed **Mars**. It was a coprocessor that bolted onto the Genesis, adding a polygon-capable layer that the Genesis VDP couldn't render. The two SH-2 processors in the 32X did 3D rendering, the Genesis VDP continued doing 2D tiles and sprites, and the outputs were composited together.
 
-Jupiter Mars does the same thing: a $4 coprocessor bolted onto the $6 main system, adding 3D polygon capability to a 2D retro SDK. Two processors, asymmetric architecture, layered output through a hardware compositor.
-
-Mars → Jupiter. Same orbital path, more mass.
+Mercury (codenamed *Mars* internally for that reason) does the same thing: a $4 coprocessor bolted onto the $6 main system, adding 3D polygon capability to a 2D retro SDK. Two processors, asymmetric architecture, layered output through a hardware compositor.
 
 ## Status / TODO
 

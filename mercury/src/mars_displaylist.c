@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — Display list executor
+ * Mercury — Display list executor
  *
  * Parses the command buffer received from V3s over SPI
  * and dispatches rendering commands to the rasterizer.

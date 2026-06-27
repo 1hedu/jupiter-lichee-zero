@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — Main entry point
+ * Mercury — Main entry point
  *
  * Core 0: Receives display lists from V3s over SPI, executes them
  * Core 1: Continuously scans out the front framebuffer as parallel CSI

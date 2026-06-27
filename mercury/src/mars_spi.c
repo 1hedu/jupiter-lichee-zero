@@ -1,5 +1,5 @@
 /*
- * Jupiter Mars — SPI slave receiver
+ * Mercury — SPI slave receiver
  *
  * Receives display list command buffers from the V3s over SPI.
  * The V3s is SPI master, Pico is slave.

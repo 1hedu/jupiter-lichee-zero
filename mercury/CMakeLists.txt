@@ -1,9 +1,9 @@
-# Jupiter Mars — Pico polygon coprocessor with PicoDVI output
+# Mercury — Pico polygon coprocessor with PicoDVI output
 cmake_minimum_required(VERSION 3.13)
 
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
-project(jupiter_mars C CXX ASM)
+project(mercury C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
 pico_sdk_init()
@@ -13,7 +13,7 @@ set(PICODVI_PATH ${CMAKE_CURRENT_LIST_DIR}/external/PicoDVI/software
     CACHE PATH "Path to PicoDVI software directory")
 add_subdirectory(${PICODVI_PATH}/libdvi libdvi)
 
-add_executable(jupiter_mars
+add_executable(mercury
     src/mars_main.c
     src/mars_raster.c
     src/mars_displaylist.c
@@ -24,17 +24,17 @@ add_executable(jupiter_mars
 # Keep the PIO CSI source for future analog MIPI route
 # To switch: replace dvi_out.c with csi_out.c (or mipi_out.c)
 
-target_include_directories(jupiter_mars PRIVATE
+target_include_directories(mercury PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
 # PicoDVI 8bpp RGB332 config
-target_compile_definitions(jupiter_mars PRIVATE
+target_compile_definitions(mercury PRIVATE
     DVI_VERTICAL_REPEAT=1
     DVI_SYMBOLS_PER_WORD=2
 )
 
-target_link_libraries(jupiter_mars
+target_link_libraries(mercury
     pico_stdlib
     pico_multicore
     hardware_spi
@@ -42,7 +42,7 @@ target_link_libraries(jupiter_mars
     libdvi
 )
 
-pico_enable_stdio_usb(jupiter_mars 1)
-pico_enable_stdio_uart(jupiter_mars 0)
+pico_enable_stdio_usb(mercury 1)
+pico_enable_stdio_uart(mercury 0)
 
-pico_add_extra_outputs(jupiter_mars)
+pico_add_extra_outputs(mercury)
