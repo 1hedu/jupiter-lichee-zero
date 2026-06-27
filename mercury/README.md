@@ -1,6 +1,8 @@
-# Jupiter Mars — Pico Polygon Coprocessor
+# Mercury — Pico Polygon Coprocessor for Jupiter
 
-A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, outputting frames over parallel CSI to the Allwinner V3s. The Pico is to Jupiter what the 32X (codenamed Mars) was to the Genesis.
+A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, outputting frames over parallel CSI to the Allwinner V3s. Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
+
+**Naming**: externally **Mercury** (Roman messenger god, smallest planet, fast companion to Jupiter). Internally codenamed **Mars** in the source tree (`mars_*.c`, `jupiter32x.h`) as a direct tribute to the Sega 32X — whose own internal Sega codename was *Mars*, and which this project closely parallels in architecture (small accelerator adding 3D to a 2D host).
 
 ## Architecture
 
@@ -101,7 +103,7 @@ The cube uses painter's algorithm (back-to-front face sorting) and integer-only 
 
 ```bash
 export PICO_SDK_PATH=/path/to/pico-sdk
-cd jupiter-pico
+cd mercury
 mkdir build && cd build
 cmake ..
 make
@@ -136,7 +138,7 @@ mars_spi_send(display_list_buf, display_list_len);
 ## File Map
 
 ```
-jupiter-pico/
+mercury/
 ├── CMakeLists.txt              Pico SDK build config
 ├── README.md                   This file
 ├── include/
