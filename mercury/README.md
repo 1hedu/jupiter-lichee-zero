@@ -153,6 +153,17 @@ mercury/
     └── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
 ```
 
+## Pico → V3s bridge chip
+
+V3s's CSI controller is **MIPI CSI-2**, not parallel DVP, so a bridge chip is mandatory. Two routes have been considered and the code keeps both alive:
+
+| Route | Bridge chip | Pico output | Code path | Status |
+|---|---|---|---|---|
+| **HDMI** | **TC358743** (HDMI → MIPI CSI-2) | PicoDVI library at 133 MHz | `src/dvi_out.c`, libdvi linked in CMakeLists | Currently active |
+| **DVP** | **TC358748** (DVP → MIPI CSI-2) | PIO 8-bit parallel + sync lines | `src/csi_out.c` + `pio/csi_out.pio` | Kept around as the future analog-MIPI route |
+
+Either bridge needs I2C register programming from the V3s side at boot (lane count, data rate, color format, PHY init). Pin mapping, timing, and power sequencing are TBD once a specific bridge dev board is in hand.
+
 ## Performance
 
 At 133MHz dual Cortex-M0+:
@@ -176,6 +187,6 @@ This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons pe
 
 ### Needs Work
 - **MIPI CSI-2 PHY configuration on V3s** — `csi_capture_init()` sets up the CSI controller (buffer, size, interrupts) but does NOT configure the MIPI PHY (lane count, data rate, protocol layer). Need a Linux register dump with a real MIPI camera to get the exact PHY register sequence. Same approach used for audio codec and CedarVE.
-- **DVP-to-MIPI bridge chip selection and I2C config** — the bridge (e.g. TC358748) needs I2C register programming at init. Pin mapping, timing, and power sequencing TBD once hardware is in hand.
+- **Bridge chip I2C config** — see the "Pico → V3s bridge chip" section above. Either TC358743 (HDMI route, currently active) or TC358748 (DVP route, kept around) needs I2C register programming from the V3s at init.
 - **Texture rendering** — CMD_TEXTURE uploads data but no rendering command references texture slots. Need CMD_TEXTRI or similar.
 - **R3G3B2→ARGB8888 NEON version** — `mercury_r3g3b2_to_argb()` is scalar C. A NEON version could process 16 pixels per pass.
