@@ -233,37 +233,69 @@ static void render_ground(uint32_t fb_addr)
 
 
 /* ================================================================
- *  SPRITE DATA
+ *  SPRITE DATA — ASCII pixel maps (one char per pixel)
  * ================================================================ */
 
-/* Hero: 24×24 ARGB (same procedural hero as other demos) */
+typedef struct { char ch; uint32_t argb; } pal_entry_t;
+
+static void decode_sprite(const char *const *rows, int w, int h,
+                          const pal_entry_t *pal, uint32_t *out)
+{
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            char ch = rows[y][x];
+            uint32_t px = 0x00000000;
+            for (const pal_entry_t *p = pal; p->ch; p++)
+                if (p->ch == ch) { px = p->argb; break; }
+            out[y * w + x] = px;
+        }
+}
+
+/* Hero: 24×24 caped adventurer (same art as the sprites demo) */
 #define HERO_W 24
 #define HERO_H 24
 static uint32_t hero_data[HERO_W * HERO_H];
 
-static void gen_hero(void)
-{
-    for (int y = 0; y < HERO_H; y++)
-        for (int x = 0; x < HERO_W; x++) {
-            uint32_t px = 0x00000000;
-            int cx = x - 12, cy = y - 12;
-            if (cy >= -11 && cy <= -6) {
-                int ddx = cx, ddy = cy + 8;
-                if (ddx*ddx + ddy*ddy <= 12) px = 0xFFFFCC66;
-            }
-            if (cy == -9 && (cx == -2 || cx == 2)) px = 0xFF202020;
-            if (cy >= -5 && cy <= 3 && cx >= -4 && cx <= 4) px = 0xFFFF8800;
-            if (cy == 1 && cx >= -4 && cx <= 4) px = 0xFF804000;
-            if (cy >= -4 && cy <= 0 && (cx == -5 || cx == 5)) px = 0xFFFFCC66;
-            if (cy >= 4 && cy <= 8 && cx >= -3 && cx <= -1) px = 0xFF4444AA;
-            if (cy >= 4 && cy <= 8 && cx >= 1 && cx <= 3) px = 0xFF4444AA;
-            if (cy >= 9 && cy <= 10 && ((cx >= -4 && cx <= -1) || (cx >= 1 && cx <= 4)))
-                px = 0xFF663300;
-            hero_data[y * HERO_W + x] = px;
-        }
-}
+static const pal_entry_t hero_pal[] = {
+    { 'K', 0xFF141020 }, { 'S', 0xFFF0C896 }, { 's', 0xFFC89060 },
+    { 'H', 0xFF7A3B2E }, { 'T', 0xFF2FA5A0 }, { 't', 0xFF1E6E6C },
+    { 'C', 0xFFC7327A }, { 'c', 0xFF8A1F56 }, { 'G', 0xFFF2C14E },
+    { 'B', 0xFF4A3A5E }, { 'b', 0xFF322645 }, { 'W', 0xFFFFF7E8 },
+    { 0, 0 }
+};
 
-/* NPC: 16×16 indexed palette sprite (4 elemental variants) */
+static const char *const hero_map[HERO_H] = {
+    "........KKKKKK..........",
+    ".......KHHHHHHK.........",
+    "......KHHHHHHHHK........",
+    "......KHHSSSSSHK........",
+    "......KSSSSSSSSK........",
+    "......KSKWSSKWSK........",
+    "......KSSSSSSSSK........",
+    "......KsSSKKSSsK........",
+    ".......KsSSSSsK.........",
+    "....KKKKTTTTTTKKK.......",
+    "...KCCKTTGGGGTTKsK......",
+    "..KCCcKTTTTTTTTKSK......",
+    ".KCCcKTTtTTTTtTTKK......",
+    ".KCccKTTtTTTTtTTK.......",
+    ".KCccKTGGGGGGGGTK.......",
+    ".KCccKtTTTTTTTTtK.......",
+    ".KCccKKtTTTTTTtKK.......",
+    ".KCcccKKKKKKKKKK........",
+    ".KCccccKBBKKBBK.........",
+    "..KccccKBBKKBBK.........",
+    "...KKKKKBbKKBbK.........",
+    "......KBBbKKBBbK........",
+    "......KbbbKKbbbK........",
+    ".......KKK..KKK.........",
+};
+
+static void gen_hero(void)
+{ decode_sprite(hero_map, HERO_W, HERO_H, hero_pal, hero_data); }
+
+/* NPC: 16×16 indexed "elemental spirit" — outline, 3-tone body ramp,
+ * glowing core, crest tips. One bitmap, four palettes. */
 #define NPC_W 16
 #define NPC_H 16
 static uint8_t __attribute__((aligned(4))) npc_idx[NPC_W * NPC_H];
@@ -273,58 +305,81 @@ static uint32_t pal_ice[256];
 static uint32_t pal_earth[256];
 static uint32_t pal_wind[256];
 
+/* index legend: 0 transparent, 1 outline, 2 body dark, 3 body mid,
+ * 4 body light, 5 core glow, 6 eye, 7 crest accent */
+static const char *const npc_map[NPC_H] = {
+    "................",
+    ".....7....7.....",
+    "....17....71....",
+    "....12111121....",
+    "...1233333321...",
+    "..123344443321..",
+    ".12334655643321.",
+    ".12344556544321.",
+    ".12334455443321.",
+    "..123344443321..",
+    "..112334433211..",
+    "...1223333221...",
+    "....12233221....",
+    ".....122221.....",
+    "......1221......",
+    ".......11.......",
+};
+
 static void gen_npc(void)
 {
     for (int y = 0; y < NPC_H; y++)
         for (int x = 0; x < NPC_W; x++) {
-            uint8_t idx = 0;
-            int cx = x - 8, cy = y - 8;
-            int d2 = cx*cx + cy*cy;
-            /* Body */
-            if (d2 <= 42) idx = 1;
-            if (d2 <= 20) idx = 2;
-            /* Eyes */
-            if (cy >= -2 && cy <= 0 && (cx == -3 || cx == 3))
-                idx = (cy == -1) ? 3 : 4;
-            /* Horn/antennae */
-            if (cy <= -6 && cy >= -7 && (cx == 0 || cx == -4 || cx == 4))
-                idx = 1;
-            npc_idx[y * NPC_W + x] = idx;
+            char c = npc_map[y][x];
+            npc_idx[y * NPC_W + x] = (c == '.') ? 0 : (uint8_t)(c - '0');
         }
 
-    /* 0=transparent, 1=body dark, 2=body light, 3=eye bright, 4=eye dim */
-    pal_fire[0]=0x00000000; pal_fire[1]=0xFFCC2244; pal_fire[2]=0xFFFF4466;
-    pal_fire[3]=0xFFFFFF00; pal_fire[4]=0xFFFF8800;
+    /* dark→light body ramps; hot core; pale eye; crest accent */
+    pal_fire[1]=0xFF200A12; pal_fire[2]=0xFF8A2430; pal_fire[3]=0xFFC24232;
+    pal_fire[4]=0xFFE8763A; pal_fire[5]=0xFFFFD046; pal_fire[6]=0xFFFFF3C0;
+    pal_fire[7]=0xFFFF9A3C;
 
-    pal_ice[0]=0x00000000; pal_ice[1]=0xFF2244CC; pal_ice[2]=0xFF4466FF;
-    pal_ice[3]=0xFF00FFFF; pal_ice[4]=0xFF0088FF;
+    pal_ice[1]=0xFF0A1424; pal_ice[2]=0xFF24468A; pal_ice[3]=0xFF3A6EC2;
+    pal_ice[4]=0xFF6AA8E8; pal_ice[5]=0xFFC8ECFF; pal_ice[6]=0xFFFFFFFF;
+    pal_ice[7]=0xFF8AD8FF;
 
-    pal_earth[0]=0x00000000; pal_earth[1]=0xFF22CC44; pal_earth[2]=0xFF44FF66;
-    pal_earth[3]=0xFFFFFF00; pal_earth[4]=0xFF88FF00;
+    pal_earth[1]=0xFF14200A; pal_earth[2]=0xFF4A6A24; pal_earth[3]=0xFF6E9438;
+    pal_earth[4]=0xFF9AC050; pal_earth[5]=0xFFE8F0A0; pal_earth[6]=0xFFF8FFE0;
+    pal_earth[7]=0xFFC09A4A;
 
-    pal_wind[0]=0x00000000; pal_wind[1]=0xFFAA88CC; pal_wind[2]=0xFFCCAAFF;
-    pal_wind[3]=0xFFFFFFFF; pal_wind[4]=0xFFDDCCEE;
+    pal_wind[1]=0xFF180F26; pal_wind[2]=0xFF5E4A8A; pal_wind[3]=0xFF8A6EC2;
+    pal_wind[4]=0xFFB89AE8; pal_wind[5]=0xFFF0E4FF; pal_wind[6]=0xFFFFFFFF;
+    pal_wind[7]=0xFFE8C8FF;
 }
 
-/* Pickup item: 12×12 ARGB for rotscale spinning */
+/* Pickup item: 12×12 faceted gem for rotscale spinning */
 #define ITEM_W 12
 #define ITEM_H 12
 static uint32_t item_data[ITEM_W * ITEM_H];
 
+static const pal_entry_t item_pal[] = {
+    { 'K', 0xFF1A1408 }, { 'D', 0xFFC89018 }, { 'M', 0xFFF2C14E },
+    { 'L', 0xFFFFE68A }, { 'W', 0xFFFFFDF0 },
+    { 0, 0 }
+};
+
+static const char *const item_map[ITEM_H] = {
+    ".....KK.....",
+    "....KMMK....",
+    "...KMLLMK...",
+    "..KMLWWLMK..",
+    ".KMLWWWWLMK.",
+    "KDMLWWWWLMDK",
+    "KDDMLLLLMDDK",
+    ".KDDMMMMDDK.",
+    "..KDDMMDDK..",
+    "...KDDDDK...",
+    "....KDDK....",
+    ".....KK.....",
+};
+
 static void gen_item(void)
-{
-    for (int y = 0; y < ITEM_H; y++)
-        for (int x = 0; x < ITEM_W; x++) {
-            uint32_t px = 0x00000000;
-            int cx = x - 6, cy = y - 6;
-            /* Diamond shape */
-            int d = (cx < 0 ? -cx : cx) + (cy < 0 ? -cy : cy);
-            if (d <= 4) px = 0xFFFFDD44;
-            if (d <= 2) px = 0xFFFFFF88;
-            if (d == 0) px = 0xFFFFFFCC;
-            item_data[y * ITEM_W + x] = px;
-        }
-}
+{ decode_sprite(item_map, ITEM_W, ITEM_H, item_pal, item_data); }
 
 /* Shadow: small ellipse for all sprites */
 #define SHADOW_W 24

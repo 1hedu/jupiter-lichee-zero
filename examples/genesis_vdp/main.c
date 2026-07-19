@@ -24,7 +24,7 @@
  *  TILE DATA — 4bpp, 32 bytes per tile
  * ================================================================ */
 
-#define TILE_COUNT 32
+#define TILE_COUNT 40   /* 24..37 = HUD glyph tiles */
 static uint8_t tiledata[TILE_COUNT * 32];
 
 /* Pack 64 nibble pixels (8x8) into 32 bytes of 4bpp data. */
@@ -104,6 +104,14 @@ static void init_tiles(void)
     { uint8_t d[64]; for(int y=0;y<8;y++) for(int x=0;x<8;x++)
         d[y*8+x] = (x==3||x==4) ? 3 : (y<2 && x>=2 && x<=5) ? 6 : 0;
       set_tile(14, d); }
+    /* 15: dirt with dark speckles (mid depth) */
+    { uint8_t d[64]; for(int y=0;y<8;y++) for(int x=0;x<8;x++)
+        d[y*8+x] = (((x*5+y*3)%13)==0) ? 9 : 1;
+      set_tile(15, d); }
+    /* 19: deep dirt — dark base with faint lighter flecks */
+    { uint8_t d[64]; for(int y=0;y<8;y++) for(int x=0;x<8;x++)
+        d[y*8+x] = (((x*7+y*5)%17)==0) ? 1 : 9;
+      set_tile(19, d); }
 
     /* --- Window/HUD tiles, palette 2 --- */
     /* 16: HUD background */
@@ -117,6 +125,41 @@ static void init_tiles(void)
         d[y*8+x] = (y == 0) ? 3 : (y > 5) ? 2 : 1;
       set_tile(18, d); }
 
+    /* 24+: HUD glyph tiles — 5×7 font on the HUD background, white
+     * with a 1px drop shadow. One glyph per tile, order matches
+     * HUD_GLYPHS ("JUPITERSDKGNV-"); the window map spells with them. */
+    {
+        static const char *const font[14][7] = {
+            { ".####","...#.","...#.","...#.","...#.","#..#.",".##.." }, /* J */
+            { "#...#","#...#","#...#","#...#","#...#","#...#",".###." }, /* U */
+            { "####.","#...#","#...#","####.","#....","#....","#...." }, /* P */
+            { "#####","..#..","..#..","..#..","..#..","..#..","#####" }, /* I */
+            { "#####","..#..","..#..","..#..","..#..","..#..","..#.." }, /* T */
+            { "#####","#....","#....","####.","#....","#....","#####" }, /* E */
+            { "####.","#...#","#...#","####.","#.#..","#..#.","#...#" }, /* R */
+            { ".####","#....","#....",".###.","....#","....#","####." }, /* S */
+            { "####.","#...#","#...#","#...#","#...#","#...#","####." }, /* D */
+            { "#...#","#..#.","#.#..","##...","#.#..","#..#.","#...#" }, /* K */
+            { ".###.","#....","#....","#.###","#...#","#...#",".###." }, /* G */
+            { "#...#","##..#","#.#.#","#..##","#...#","#...#","#...#" }, /* N */
+            { "#...#","#...#","#...#","#...#",".#.#.",".#.#.","..#.." }, /* V */
+            { ".....",".....",".....",".###.",".....",".....","....." }, /* - */
+        };
+        for (int g = 0; g < 14; g++) {
+            uint8_t d[64];
+            for (int i = 0; i < 64; i++) d[i] = 1;         /* HUD bg  */
+            for (int y = 0; y < 7; y++)                    /* shadows */
+                for (int x = 0; x < 5; x++)
+                    if (font[g][y][x] == '#')
+                        d[(y + 1) * 8 + (x + 2)] = 4;
+            for (int y = 0; y < 7; y++)                    /* glyphs  */
+                for (int x = 0; x < 5; x++)
+                    if (font[g][y][x] == '#')
+                        d[y * 8 + (x + 1)] = 7;
+            set_tile(24 + g, d);
+        }
+    }
+
     /* --- Sprite tiles: 16×16 character, 4 tiles column-major (palette 0) ---
      * Layout within the sprite (pixel coordinates):
      *   (0..7,0..7)  = tile 20   (0..7,8..15) = tile 21
@@ -124,24 +167,26 @@ static void init_tiles(void)
      * Uses palette 0 (Plane A's palette): 1=brown, 6=yellow (highlight),
      * 3=dark (outline), 7=red (body). */
     {
-        /* Full 16×16 character bitmap */
+        /* Full 16×16 character bitmap: outlined runner, mid-stride.
+         * pal0 indices: 3 outline, 9 hair/boots, 5 skin, 7 red jacket,
+         * 6 gold trim, 13 pants, 15 eye glint. */
         static const uint8_t sprite[16*16] = {
-            0,0,0,3,3,3,3,0,0,3,3,3,3,0,0,0,
-            0,0,3,6,6,6,6,3,3,6,6,6,6,3,0,0,
-            0,3,6,6,6,6,6,6,6,6,6,6,6,6,3,0,
-            0,3,6,3,6,6,3,6,6,3,6,6,3,6,3,0,
-            0,3,6,6,6,6,6,6,6,6,6,6,6,6,3,0,
-            0,3,6,6,3,3,3,3,3,3,3,3,6,6,3,0,
-            0,0,3,6,6,6,6,6,6,6,6,6,6,3,0,0,
-            0,0,0,3,3,3,3,3,3,3,3,3,3,0,0,0,
-            0,0,0,7,7,7,7,7,7,7,7,7,7,0,0,0,
-            0,0,7,7,1,1,7,7,7,7,1,1,7,7,0,0,
-            0,0,7,7,1,1,7,7,7,7,1,1,7,7,0,0,
-            0,0,7,7,7,7,7,7,7,7,7,7,7,7,0,0,
-            0,0,7,7,7,7,7,7,7,7,7,7,7,7,0,0,
-            0,0,0,7,7,7,0,0,0,0,7,7,7,0,0,0,
-            0,0,0,3,3,3,0,0,0,0,3,3,3,0,0,0,
-            0,0,3,3,3,0,0,0,0,0,0,3,3,3,0,0,
+            0, 0, 0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 3, 9, 9, 9, 9, 9, 3, 0, 0, 0, 0, 0,
+            0, 0, 0, 3, 9, 9, 9, 9, 9, 9, 9, 3, 0, 0, 0, 0,
+            0, 0, 0, 3, 9, 5, 5, 5, 5, 5, 9, 3, 0, 0, 0, 0,
+            0, 0, 0, 3, 5, 5, 3, 5, 5,15, 3, 3, 0, 0, 0, 0,
+            0, 0, 0, 3, 5, 5, 5, 5, 5, 5, 5, 3, 0, 0, 0, 0,
+            0, 0, 0, 0, 3, 5, 5, 5, 5, 5, 3, 0, 0, 0, 0, 0,
+            0, 0, 0, 3, 7, 7, 7, 7, 7, 7, 7, 3, 0, 0, 0, 0,
+            0, 0, 3, 7, 7, 7, 6, 6, 7, 7, 7, 7, 3, 0, 0, 0,
+            0, 3, 5, 3, 7, 7, 7, 7, 7, 7, 3, 5, 3, 0, 0, 0,
+            0, 3, 5, 3, 7, 7, 7, 7, 7, 7, 3, 5, 3, 0, 0, 0,
+            0, 0, 3, 3, 7, 7, 6, 6, 7, 7, 3, 3, 0, 0, 0, 0,
+            0, 0, 0, 3,13,13, 3, 3,13,13, 3, 0, 0, 0, 0, 0,
+            0, 0, 3,13,13, 3, 0, 0, 3,13,13, 3, 0, 0, 0, 0,
+            0, 3, 9, 9, 3, 0, 0, 0, 0, 3, 9, 9, 3, 0, 0, 0,
+            0, 3, 3, 3, 0, 0, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0,
         };
         /* Unpack into 4 8×8 tiles in column-major order:
          * tile 20 = left column top, 21 = left column bottom,
@@ -227,9 +272,13 @@ static void build_maps(void)
     /* --- Plane A: city foreground (palette 0) --- */
     for (int y=0;y<MH;y++) for (int x=0;x<MW;x++) {
         uint16_t t = 0;
-        /* Ground at the bottom */
+        /* Ground: grass lip, then dirt falling into shadow with depth */
         if (y == 30)      t = GEN_ENTRY(9,  0, 0, 0);
-        else if (y > 30)  t = GEN_ENTRY(8,  0, 0, 0);
+        else if (y > 30)
+            t = (y == 31) ? GEN_ENTRY(8, 0, 0, 0) :
+                (y <= 33) ? GEN_ENTRY(15, 0, 0, 0) :
+                (y == 34) ? GEN_ENTRY(((x + y) & 1) ? 15 : 19, 0, 0, 0)
+                          : GEN_ENTRY(19, 0, 0, 0);
         /* Buildings: each 10-column block is one building */
         else {
             int bx = x % 10;
@@ -261,6 +310,22 @@ static void build_maps(void)
         else if (y == WIN_H-1) t = GEN_ENTRY(18, 2, 0, 0); /* bottom border */
         else             t = GEN_ENTRY(16, 2, 0, 0);
         window_map[y * WIN_W + x] = t;
+    }
+
+    /* Spell the banner with the glyph tiles (order = HUD_GLYPHS) */
+    {
+        static const char glyphs[] = "JUPITERSDKGNV-";
+        static const char msg[]    = "JUPITER SDK - GENESIS VDP";
+        int x0 = (WIN_W - (int)(sizeof(msg) - 1)) / 2;
+        for (int i = 0; msg[i]; i++) {
+            if (msg[i] == ' ') continue;
+            for (int g = 0; glyphs[g]; g++)
+                if (glyphs[g] == msg[i]) {
+                    window_map[1 * WIN_W + x0 + i] =
+                        GEN_ENTRY(24 + g, 2, 0, 0);
+                    break;
+                }
+        }
     }
 }
 

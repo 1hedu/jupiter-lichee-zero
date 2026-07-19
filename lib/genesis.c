@@ -209,12 +209,13 @@ static void render_window(uint32_t *ovl, uint32_t pitch,
     uint32_t wy1 = w->y + w->h; if (wy1 > rh) wy1 = rh;
     if (wx0 >= wx1 || wy0 >= wy1) return;
 
-    uint32_t mw = w->map_w - 1;
-    uint32_t mh = w->map_h - 1;
-
+    /* Window maps are arbitrary sizes (e.g. 40x3) — masking with
+     * map_w-1 / map_h-1 only works for powers of two and silently
+     * remapped rows/columns otherwise (row 1 of a 3-row HUD rendered
+     * row 0). Use a real modulo; it's once per tile, not per pixel. */
     for (uint32_t ly = wy0; ly < wy1; ly++) {
         uint32_t local_y = ly - wy0;
-        uint32_t ty = (local_y >> 3) & mh;
+        uint32_t ty = (local_y >> 3) % w->map_h;
         uint32_t fy = local_y & 7;
         uint32_t *row = ovl + (y0 + ly) * pitch;
 
@@ -223,7 +224,7 @@ static void render_window(uint32_t *ovl, uint32_t pitch,
 
         for (uint32_t lx = wx0; lx < wx1; lx++) {
             uint32_t local_x = lx - wx0;
-            uint32_t col = (local_x >> 3) & mw;
+            uint32_t col = (local_x >> 3) % w->map_w;
 
             if (col != cur) {
                 uint16_t entry = w->map[ty * w->map_w + col];
