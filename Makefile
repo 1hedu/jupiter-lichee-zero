@@ -44,6 +44,10 @@ IS_MENU := $(findstring menu,$(GAME))
 
 # ---- Optional: mt32emu (Munt) for MT-32 LA synthesis ----
 # Pulled in automatically when the game path contains "mt32" or is the menu.
+# third_party/munt is a submodule (populate with `git submodule update
+# --init third_party/munt`); the .prepared rule below generates the
+# CMake-templated config.h and applies the one bare-metal patch, so no
+# manual cmake run is needed.
 MT32_ENABLE := $(findstring mt32,$(GAME))$(IS_MENU)
 ifneq ($(MT32_ENABLE),)
   MT32_SRC_DIR = third_party/munt/mt32emu/src
@@ -340,8 +344,27 @@ build/fatfs/%.o: %.c
 	      -I third_party/fatfs -I include \
 	      -c $< -o $@
 
+# mt32emu source prep: generate the CMake-templated config.h (values
+# from cmake/project_data.cmake: 2.8.0, static build, C++ API) and patch
+# the one -fno-rtti incompatibility — freeResamplerModel's dynamic_cast
+# is provably a static_cast there (every stage between model and source
+# is CascadeStage-derived by construction; the NULL branch is dead).
+build/mt32/.prepared: $(MT32_SRC_DIR)/config.h.in
+	@mkdir -p build/mt32
+	sed -e 's/@libmt32emu_VERSION@/2.8.0/' \
+	    -e 's/@libmt32emu_VERSION_MAJOR@/2/' \
+	    -e 's/@libmt32emu_VERSION_MINOR@/8/' \
+	    -e 's/@libmt32emu_VERSION_PATCH@/0/' \
+	    -e 's/@libmt32emu_EXPORTS_TYPE@/0/' \
+	    -e 's|@libmt32emu_SHARED_DEFINITION@|/* #undef MT32EMU_SHARED */|' \
+	    -e 's/@libmt32emu_RUNTIME_VERSION_CHECK@/0/g' \
+	    $(MT32_SRC_DIR)/config.h.in > $(MT32_SRC_DIR)/config.h
+	sed -i 's/dynamic_cast<CascadeStage \*>/static_cast<CascadeStage *>/' \
+	    $(MT32_SRC_DIR)/srchelper/srctools/src/ResamplerModel.cpp
+	@touch $@
+
 # mt32emu C++ compile rules
-build/mt32/%.o: $(MT32_SRC_DIR)/%.cpp
+build/mt32/%.o: $(MT32_SRC_DIR)/%.cpp build/mt32/.prepared
 	@mkdir -p $(dir $@)
 	$(CXX) $(MT32_CXX_FLAGS) -c $< -o $@
 
