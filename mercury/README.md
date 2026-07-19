@@ -194,7 +194,8 @@ mercury/
 │   └── test_mercury.c             Renders the cube via display list → PNG,
 │                                  clip-equivalence fuzz, hostile-input fuzz (ASan)
 └── v3s_side/
-    └── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
+    ├── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
+    └── tc358743_init.h            HDMI→CSI bridge I2C bring-up (TWI0, from mainline driver)
 ```
 
 ## Host tests
@@ -254,6 +255,6 @@ This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons pe
 
 ### Needs Work
 - **MIPI CSI-2 PHY configuration on V3s** — `csi_capture_init()` sets up the CSI controller (buffer, size, interrupts) but does NOT configure the MIPI PHY (lane count, data rate, protocol layer). Need a Linux register dump with a real MIPI camera to get the exact PHY register sequence. Same approach used for audio codec and CedarVE.
-- **Bridge chip I2C config** — see the "Pico → V3s bridge chip" section above. Either TC358743 (HDMI route, currently active) or TC358748 (DVP route, kept around) needs I2C register programming from the V3s at init.
+- **Bridge chip I2C config** — `v3s_side/tc358743_init.h` now carries the full TC358743 sequence (transcribed from the mainline Linux driver: refclk/PHY/PLL setup, HDCP off, RGB888, 2-lane 594 Mbps CSI with the REF_02 D-PHY timing set) over the same TWI0 bus lib/si5351.c uses. Written to spec, needs a bridge board on the bench to verify — `tc358743_status()` reads SYS_STATUS for debugging (expect 0x8E with the Pico connected). The TC358748 (DVP route) equivalent is still TBD.
 - **Texture rendering** — CMD_TEXTURE uploads data but no rendering command references texture slots. Need CMD_TEXTRI or similar.
 - **R3G3B2→ARGB8888 NEON version** — `mercury_r3g3b2_to_argb()` is scalar C. A NEON version could process 16 pixels per pass.
