@@ -76,14 +76,22 @@ void main(void)
         while (1) ;
     }
     /* Request 48 kHz output so we can feed mix_buf directly — our DAC
-     * doesn't have a 32 kHz PLL config. Munt's internal resampler
-     * handles the 32 -> 48 conversion. */
+     * doesn't have a 32 kHz PLL config. ACCURATE analog mode renders
+     * natively at 32000*3/2 = 48000 Hz, so the internal resampler is
+     * bypassed entirely (the default COARSE mode outputs 32 kHz and
+     * drags a per-sample sinc SRC behind it — ~10x the render cost,
+     * which is what starved real-time playback on busy passages). */
+    mt32emu_set_analog_output_mode(ctx, MT32EMU_AOM_ACCURATE);
     mt32emu_set_stereo_output_samplerate(ctx, 48000.0);
     rc = mt32emu_open_synth(ctx);
     if (rc != MT32EMU_RC_OK) {
         uart_puts("FAIL: open_synth\n");
         while (1) ;
     }
+    /* In-phase partial mixing: the authentic LA32 mixes half the
+     * partials in counter-phase, which at high polyphony sounds like
+     * fuzz as near-identical partials beat against each other. */
+    mt32emu_set_nice_partial_mixing_enabled(ctx, MT32EMU_BOOL_TRUE);
     uart_puts("Synth open, rate = ");
     uart_putdec(mt32emu_get_actual_stereo_output_samplerate(ctx));
     uart_puts(" Hz\n");

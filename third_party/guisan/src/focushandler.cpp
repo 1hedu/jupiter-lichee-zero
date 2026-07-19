@@ -308,34 +308,47 @@ namespace gcn
             mWidgets.erase(iter);
         }
 
+        /* Clear EVERY tracking pointer that references the widget — a
+         * widget is routinely referenced by several at once (e.g.
+         * mLastWidgetWithMouse AND mLastWidgetPressed right after a
+         * click). The original upstream code returned after the first
+         * match, leaving the rest dangling; Gui::handleMouseMoved /
+         * handleMouseReleased then dereference freed memory when a
+         * deleted widget's pointer survives here. Also cover the two
+         * modal pointers, which no destructor path cleared at all. */
         if (mDraggedWidget == widget)
         {
             mDraggedWidget = nullptr;
-            return;
         }
 
         if (mLastWidgetWithMouse == widget)
         {
             mLastWidgetWithMouse = nullptr;
-            return;
         }
 
         if (mLastWidgetWithModalFocus == widget)
         {
             mLastWidgetWithModalFocus = nullptr;
-            return;
         }
 
         if (mLastWidgetWithModalMouseInputFocus == widget)
         {
             mLastWidgetWithModalMouseInputFocus = nullptr;
-            return;
         }
 
         if (mLastWidgetPressed == widget)
         {
             mLastWidgetPressed = nullptr;
-            return;
+        }
+
+        if (mModalFocusedWidget == widget)
+        {
+            mModalFocusedWidget = nullptr;
+        }
+
+        if (mModalMouseInputFocusedWidget == widget)
+        {
+            mModalMouseInputFocusedWidget = nullptr;
         }
     }
 

@@ -5,14 +5,75 @@
 - MIDI SMF playback with multi-track merge
 - Pre-render to DRAM (100s, ~18MB) for zero-CPU playback
 - 24-bit DAC mode (S32_LE, FIFO_MODE=00)
-- NEON-accelerated math (HAVE_NEON + math_neon library)
 - 60fps rendering + MT-32 audio simultaneously (with render-skip when idle)
 - Heap sized to 1MB (MT-32 needs ~915KB after lazy init)
+- Reproducible munt build: `third_party/munt` is a pinned submodule
+  (2.8.0), and `build/mt32/.prepared` generates `config.h` + applies the
+  one `-fno-rtti` patch — no manual cmake, no local uncommitted patches.
 
-## Known Issue: Subtle Crackling
-Faint crackling audible during multi-instrument MT-32 passages. Not present with OPN2, NES APU, or Linux sine wave through the same DAC.
+## The multi-channel crackle — root-caused
 
-### Ruled Out
+The long-standing "faint crackling during multi-instrument passages"
+had been chased through the entire real-time path (see Ruled Out
+below), and the decisive clue was already in this log: **pre-rendered
+audio crackles identically** — so the artifact is baked into the
+rendered samples, not the delivery. There were three stacked causes:
+
+### 1. math_neon poisoned the LA32 lookup tables (the math_neon build)
+The old local munt patch (`HAVE_NEON` mmath.h) routed `EXP2F/LOG2F`
+through math_neon's polynomial approximations (errors up to 22,000
+absolute on expf). In the BIT16S renderer the per-sample path is pure
+integer/table — but `Tables.cpp:81-86` builds `exp9[]`/`logsin9[]` **at
+init** with `EXP2F`/`LOG2F`. Wrong math there means every LUT entry is
+slightly wrong, i.e. constant subtle distortion on every sample, which
+is exactly why `lib/mt32_lut_dump.cpp` (dump LUTs, diff against a Linux
+reference) was the right instrument. The vendored stock 2.8.0 mmath.h
+computes the tables with libm doubles → tables are exact. **Do not
+re-wire math_neon into munt.** (It remains fine for game code; the
+`g_math_path` A/B bench in mt32_rt still works for comparing.)
+CPU cost is unaffected: the transcendentals only run at init and in the
+FLOAT renderer, which we don't use.
+
+### 2. Counter-phase partial mixing (authentic LA32 fuzz)
+The LA32 mixes partials with `partialIndex & 4` in **counter-phase**
+(`Partial.cpp:204`): pairs of near-identical partials subtract and
+beat against each other. At `notes=14, partials=32` — where mt32_rt's
+stats showed the fuzz — many partials sit close in frequency and this
+is clearly audible. Munt ships `set_nice_partial_mixing_enabled()` for
+exactly this; it is now enabled in mt32_poc / mt32_monkey / input_mt32
+and is the default nice-mode in mt32_rt (cycle it off to hear the
+authentic behaviour).
+
+### 3. Per-partial int16 saturation at high polyphony
+The BIT16S renderer accumulates each partial into a `Bit16s` stereo
+buffer with saturation per partial (`Partial.cpp:364-367`,
+`clipSampleEx`). Loud multi-partial passages can clip *intermediately*
+even when the final output peak reads ~25000. The real unit distorts
+here too (it's authentic), and the master-volume override in mt32_rt
+exists to buy headroom. If a fully clean mix is ever wanted, the FLOAT
+renderer accumulates without intermediate clipping — at real float
+math cost per sample (viable to try now that the render budget is no
+longer burned on SRC; see below).
+
+## Real-time throughput with multiple channels
+
+`mt32emu_open_synth()` defaults to **COARSE** analog mode: the synth
+renders at 32 kHz and the internal resampler runs a per-sample sinc
+filter to reach 48 kHz — the "10x slower" path noted in input_mt32.
+**ACCURATE** analog mode renders natively at 32000·3/2 = **48000 Hz**,
+so with our 48 kHz target the SRC is bypassed entirely
+(`SampleRateConverter.cpp`: synth delegate when rates match).
+mt32_poc and mt32_monkey previously used the default; all MT-32
+examples now set `MT32EMU_AOM_ACCURATE` before `open_synth`. That
+removes the dominant per-sample cost for busy multi-channel passages
+(the BIT16S core itself is integer/LUT and cheap).
+
+Also fixed on the SDK side: the audio DMA ISR's anti-underrun top-up
+now stays out of the ring when no PCM channel is active — previously a
+late synth frame could get a block of mixer silence spliced into the
+stream (guaranteed dropout instead of a maybe-recovered late frame).
+
+### Ruled Out (historical)
 - Software ring buffer underruns (xrun=0 with TARGET_DEPTH=3800)
 - Hardware codec FIFO underruns (hwxrun=0)
 - Output clipping (peak never exceeds ~25000, well under 32767)
@@ -25,20 +86,23 @@ Faint crackling audible during multi-instrument MT-32 passages. Not present with
 - IRQ/NEON register corruption (vpush/vpop d0-d7 in IRQ handler)
 - Heap overflow (fixed: 512KB → 1MB)
 
-### Suspected Causes
-1. **math_neon approximation errors** — HAVE_NEON replaces exp()/log()/pow() with polynomial approximations. Reported errors up to 22,000 absolute on expf. LA32 wave generator calls EXP2F dozens of times per sample. mt32-pi does NOT use math_neon and sounds clean. Needs A/B test with HAVE_NEON disabled (attempted but inconclusive due to separate bug during test).
-2. **V3s DAC noise floor** — integrated codec headphone amp has inherent noise. MT-32's smooth tones expose it; OPN2's aggressive FM masks it.
-
 ### Configuration (current)
 ```c
-// mt32-pi defaults
-mt32emu_set_stereo_output_samplerate(ctx, 48000.0);  // 32kHz→48kHz SRC
-mt32emu_open_synth(ctx);                              // COARSE analog, BIT16S renderer
-mt32emu_set_output_gain(ctx, 1.0f);                   // NICE DAC mode (default)
-audio_init_24bit();                                    // S32_LE DAC mode
+mt32emu_set_analog_output_mode(ctx, MT32EMU_AOM_ACCURATE); // native 48k, no SRC
+mt32emu_set_stereo_output_samplerate(ctx, 48000.0);
+mt32emu_open_synth(ctx);                                   // BIT16S renderer
+mt32emu_set_nice_partial_mixing_enabled(ctx, MT32EMU_BOOL_TRUE);
+mt32emu_set_output_gain(ctx, 2.0f);
+audio_init_24bit();                                        // S32_LE DAC mode
 ```
 
-### Next Steps
-- Clean A/B test: build two binaries (HAVE_NEON on/off), same pre-rendered data, listen back-to-back
-- Try higher output gain (2.0-3.0) to push signal above DAC noise floor
-- Consider replacing math_neon with ARM's optimized-routines math library (accurate + fast)
+### Verification checklist (on hardware)
+- `mt32_lut_dump` output should now be bit-identical to the Linux
+  reference (stock double-precision table build).
+- mt32_rt at a 14-note passage: cycle nice-mode between "amp-ramp" and
+  "amp+partial-mix" and listen for the fuzz appearing/disappearing.
+- cpu=% in mt32_rt stats should drop noticeably vs the old COARSE+SRC
+  numbers on poc/monkey-style configs.
+- Remaining candidate if any hiss persists: V3s DAC noise floor
+  (masked by OPN2's aggressive FM, exposed by MT-32's smooth pads) —
+  push output gain toward 2.0-3.0 and use the analog HP volume.

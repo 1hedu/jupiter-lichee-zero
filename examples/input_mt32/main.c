@@ -421,6 +421,9 @@ int main(void)
          * COARSE+SRC is 10x slower (sinc filter per sample). */
         mt32emu_set_analog_output_mode(mt32_ctx, MT32EMU_AOM_ACCURATE);
         mt32emu_open_synth(mt32_ctx);
+        /* In-phase partial mixing — avoids the authentic counter-phase
+         * partial fuzz on busy multi-channel passages. */
+        mt32emu_set_nice_partial_mixing_enabled(mt32_ctx, MT32EMU_BOOL_TRUE);
         {
             extern uint32_t heap_used(void);
             uart_puts("[dbg] heap used: "); uart_putdec(heap_used() / 1024);

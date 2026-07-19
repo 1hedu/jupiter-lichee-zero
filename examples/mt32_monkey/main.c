@@ -253,10 +253,17 @@ void main(void)
             != MT32EMU_RC_ADDED_PCM_ROM) {
         uart_puts("pcm ROM FAIL\n"); while (1);
     }
+    /* ACCURATE analog mode renders natively at 48 kHz — bypasses the
+     * internal resampler (default COARSE outputs 32 kHz + per-sample
+     * sinc SRC, ~10x the render cost). */
+    mt32emu_set_analog_output_mode(ctx, MT32EMU_AOM_ACCURATE);
     mt32emu_set_stereo_output_samplerate(ctx, (double)OUTPUT_RATE);
     if (mt32emu_open_synth(ctx) != MT32EMU_RC_OK) {
         uart_puts("open_synth FAIL\n"); while (1);
     }
+    /* In-phase partial mixing — avoids the authentic counter-phase
+     * partial fuzz on busy multi-channel passages. */
+    mt32emu_set_nice_partial_mixing_enabled(ctx, MT32EMU_BOOL_TRUE);
     mt32emu_set_output_gain(ctx, 2.0f);
 
     uart_puts("Synth open, rate=");

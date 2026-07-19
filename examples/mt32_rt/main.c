@@ -514,7 +514,9 @@ static const char *analog_mode_names[] = {
 
 /* "Nice" mode combinations (cycle via C-up) — user-wanted comparison */
 enum { NICE_NONE = 0, NICE_AMPRAMP, NICE_PANNING, NICE_PARTIALMIX, NICE_ALL, NICE_COUNT };
-static int nice_mode_idx = 1; /* default: AMPRAMP (munt default) */
+static int nice_mode_idx = 3; /* default: amp+partial-mix — in-phase
+                               * partial mixing kills the counter-phase
+                               * fuzz heard at notes=14/partials=32 */
 static const char *nice_mode_names[] = {
     "none", "amp-ramp", "amp+panning", "amp+partial-mix", "all-nice"
 };

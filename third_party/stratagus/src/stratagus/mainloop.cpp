@@ -321,14 +321,20 @@ static void GameLogicLoop()
 		// Check game goals.
 		// Check rescue of units.
 		//
-		/* C1 sweep DISABLED — deleting a dead briefing's widget
-		 * subtree at cycle 32 hung the game on next cursor move:
-		 * FocusHandler still held mDraggedWidget/mLastWidgetWithMouse/
-		 * mLastWidgetPressed (and ContainerListeners + death listeners)
-		 * pointing at the freed widgets. Calling FocusHandler::remove
-		 * per widget would cover the focus pointers but not the other
-		 * cross-references. Re-enable only after a proper atomic
-		 * teardown is wired (see menu_lifetime_diagnosis.md §C1). */
+		/* C1 sweep: tear down widget subtrees of menus that are neither
+		 * the Gui top nor anywhere on MenuStack, then evict orphaned
+		 * JupiterImage cache entries (the ~1.2 MB-per-briefing ARGB
+		 * buffers). Safe now: guisan's FocusHandler::remove clears ALL
+		 * of its tracking pointers (the original returned after the
+		 * first match, leaving e.g. mLastWidgetPressed dangling → the
+		 * historical hang on next cursor move), including the two modal
+		 * pointers no destructor path cleared. ~Widget reaches it via
+		 * _setFocusHandler(nullptr) for every widget the sweep deletes.
+		 * The briefing path registers no ContainerListeners or death
+		 * listeners, and LuaActionListeners are intentionally immortal
+		 * (see war1_widgets.cpp), so the focus pointers were the only
+		 * live cross-reference class. */
+		war1_menu_subtree_sweep();
 		switch (GameCycle % CYCLES_PER_SECOND) {
 			case 0: // At cycle 0, start all ai players...
 				if (GameCycle == 0) {

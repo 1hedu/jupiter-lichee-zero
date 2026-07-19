@@ -206,22 +206,27 @@ registers via `v3s.h` — but no SDK API exists.
   - **D** — Briefing's `listener` local-scoped instead of leaking to
     `_G.listener` and getting overwritten by the next briefing.
 
-  Not yet fixed:
-  - **C1** — atomic widget-subtree teardown for dead menus. The
-    obvious implementation hangs the game on next cursor move because
-    `gcn::FocusHandler` holds 7 widget pointers (mFocused / mDragged
-    / mLastWidgetWithMouse / mLastWidgetWithModalFocus /
-    mLastWidgetWithModalMouseInputFocus / mLastWidgetPressed / its
-    `mWidgets` list) that go dangling, plus `ContainerListener` and
-    death-listener registrations. The sweep function (and its call
-    site in `mainloop.cpp`) is compiled in but not invoked. Re-enable
-    after the cross-reference cleanup is wired (see the WC1
-    `menu_lifetime_diagnosis.md` doc).
+  - **C1** — atomic widget-subtree teardown for dead menus: **now
+    wired** (needs a hardware soak test). The historical hang on next
+    cursor move was root-caused to a guisan bug: `FocusHandler::remove`
+    returned after clearing the *first* matching tracking pointer, so
+    a widget that was e.g. both `mLastWidgetWithMouse` and
+    `mLastWidgetPressed` (the normal state right after a click) left
+    the second pointer dangling for `Gui::handleMouseMoved` /
+    `handleMouseReleased` to dereference; the two modal-focus pointers
+    were never cleared by any destructor path at all. `remove()` now
+    clears every tracking pointer (all 8 + the `mWidgets` entry), so
+    `~Widget` → `_setFocusHandler(nullptr)` fully unhooks each widget
+    the sweep deletes, and `war1_menu_subtree_sweep()` is invoked from
+    the game loop again. The briefing path registers no
+    ContainerListeners or death listeners, and LuaActionListeners are
+    intentionally immortal, so the focus pointers were the only live
+    cross-reference class.
 
-  Net: a single campaign playthrough (~24 distinct briefings) will
-  still eventually OOM-hang. Repeated mission loads of the *same*
-  mission no longer leak. Power-cycle between long sessions if you
-  intend to grind many distinct briefings back-to-back.
+  Net (pending on-device verification): dead briefings' widget
+  subtrees and their ARGB buffers are reclaimed each cycle, so a full
+  campaign playthrough should no longer OOM-hang. If it misbehaves,
+  the sweep call in `mainloop.cpp` is a single line to comment out.
 
 ## Out of scope (deliberate)
 

@@ -77,6 +77,7 @@ ifneq ($(MT32_ENABLE),)
                    -ffp-contract=off \
                    -fno-exceptions -fno-rtti -fno-threadsafe-statics \
                    -fno-use-cxa-atexit -ftree-vectorize \
+                   -ffunction-sections -fdata-sections \
                    -Wno-unused-parameter -Wno-sign-compare -Wno-unused-but-set-variable \
                    -DMT32EMU_WITH_INTERNAL_RESAMPLER=1 \
                    -I $(MT32_SRC_DIR) \
@@ -84,6 +85,10 @@ ifneq ($(MT32_ENABLE),)
                    -I third_party/math_neon \
                    -I include
   CFLAGS += -I $(MT32_SRC_DIR) -I examples/mt32_poc
+  # Strip munt's file-I/O paths (FileStream/<fstream>) that bare metal
+  # can't link — only the memory-ROM APIs are referenced. Same approach
+  # as the SC-55 build below.
+  LDFLAGS += -Wl,--gc-sections
 endif
 
 # ---- Optional: Nuked-SC55 (Roland Sound Canvas SC-55 mkII emulator) ----

@@ -408,10 +408,17 @@ void audio_dma_isr(void)
      * producer already has mix_buf above target depth, so a fast game
      * frame won't double-mix and overflow the ring. Also skipped while
      * the main loop is inside a mixer (mix_in_progress) — mixing here
-     * then would swap the L/R interleave and corrupt mix_wr. */
+     * then would swap the L/R interleave and corrupt mix_wr — and when
+     * no PCM channel is active: synth examples (mt32_*, opn2_*, sc55)
+     * write mix_buf directly, and injecting audio_mix's silence into
+     * their stream would turn a late frame into a guaranteed gap. */
     {
         uint32_t depth = mix_wr - mix_rd;
-        if (!mix_in_progress && depth + (uint32_t)AUDIO_BUF_HALF <= MIX_BUF_SIZE) {
+        int pcm_active = 0;
+        for (int ch = 0; ch < AUDIO_MAX_CHANNELS; ch++)
+            if (channels[ch].active) { pcm_active = 1; break; }
+        if (pcm_active && !mix_in_progress &&
+            depth + (uint32_t)AUDIO_BUF_HALF <= MIX_BUF_SIZE) {
             audio_mix(AUDIO_BUF_HALF / 2);
         }
     }
