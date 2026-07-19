@@ -122,6 +122,7 @@ static void menu_fill_rect(uint32_t *fb, int x, int y, int w, int h, uint32_t co
 extern void colorbars_main(void);
 extern void bouncing_sprite_main(void);
 extern void jupiter_logo_main(void);
+extern void jupiter_modes_main(void);
 extern void sprites_main(void);
 extern void parallax_main(void);
 extern void fast_tiles_main(void);
@@ -194,6 +195,7 @@ typedef struct {
 
 static const menu_entry_t entries[] = {
     {"--- VIDEO ---",           NULL,                    ENTRY_HEADER},
+    {"Jupiter Modes Tour",      jupiter_modes_main,      ENTRY_DEMO},
     {"Color Bars",              colorbars_main,          ENTRY_DEMO},
     {"Bouncing Sprite",         bouncing_sprite_main,    ENTRY_DEMO},
     {"Jupiter Logo",            jupiter_logo_main,       ENTRY_DEMO},
