@@ -20,6 +20,7 @@
  */
 #include "jupiter.h"
 #include "gb.h"
+#include "sheet.h"
 #include "pmu.h"
 #include <string.h>
 
@@ -78,59 +79,25 @@ static void build_atlas(void)
     }
 }
 
-/* ----- Nearest-palette match (decoded ARGB → 0-3 color index) ----- */
-static int nearest_pal_idx(uint32_t c)
-{
-    int best = 0, bd = 999999;
-    int cr = (c >> 16) & 0xFF, cg = (c >> 8) & 0xFF, cb = c & 0xFF;
-    for (int i = 0; i < 4; i++) {
-        uint32_t p = celebi_pal[i];
-        int dr = cr - (int)((p>>16)&0xFF);
-        int dg = cg - (int)((p>>8)&0xFF);
-        int db = cb - (int)(p&0xFF);
-        int d = dr*dr + dg*dg + db*db;
-        if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-}
-
-/* ----- Cut decoded atlas → GB 2bpp tiles per frame ---------------- */
+/* ----- Cut decoded atlas → GB 2bpp tiles per frame (lib/sheet.c) --
+ * bg_thresh = 0: every atlas pixel goes through the pure nearest-
+ * palette match against the 4-color GB palette, exactly like the old
+ * local nearest_pal_idx() path. */
 static void cut_atlas_to_tiles(void)
 {
-    for (int f = 0; f < CELEBI_FRAMES; f++) {
-        int frame_x0 = f * CELEBI_PW;
-        static uint8_t ci_grid[CELEBI_PW * CELEBI_PH];
-
-        for (int y = 0; y < CELEBI_PH; y++)
-            for (int x = 0; x < CELEBI_PW; x++)
-                ci_grid[y * CELEBI_PW + x] =
-                    nearest_pal_idx(atlas[y * ATLAS_W + (frame_x0 + x)]);
-
-        uint8_t *out = &cedar_chr[f * META_TPF * 16];
-        for (int ty = 0; ty < META_TH; ty++) {
-            for (int tx = 0; tx < META_TW; tx++) {
-                uint8_t *tile = out + (ty * META_TW + tx) * 16;
-                for (int r = 0; r < 8; r++) {
-                    uint8_t bp0 = 0, bp1 = 0;
-                    for (int c = 0; c < 8; c++) {
-                        int px = tx * 8 + c;
-                        int py = ty * 8 + r;
-                        uint8_t ci = (px < CELEBI_PW && py < CELEBI_PH)
-                                     ? ci_grid[py * CELEBI_PW + px] : 0;
-                        bp0 |= ((ci & 1) << (7 - c));
-                        bp1 |= (((ci >> 1) & 1) << (7 - c));
-                    }
-                    tile[r * 2]     = bp0;
-                    tile[r * 2 + 1] = bp1;
-                }
-            }
-        }
-    }
+    sheet_t sh;
+    sheet_init(&sh, atlas, ATLAS_W, ATLAS_H);
+    sh.bg_thresh = 0;
+    for (int f = 0; f < CELEBI_FRAMES; f++)
+        sheet_cut(&sh, f * CELEBI_PW, 0, CELEBI_PW, CELEBI_PH, 1,
+                  SHEET_FMT_GB_2BPP, 0, celebi_pal, 0, 4,
+                  &cedar_chr[f * META_TPF * 16], META_TPF);
 }
 
 /* GB state */
 static uint8_t bg_chr[256 * 16];
 static uint8_t bg_map[GB_MAP_SIZE];
+static uint8_t bg_attr[GB_MAP_SIZE];   /* GBC per-tile palette select */
 static uint32_t bg_palette[32];
 static uint32_t spr_palette[32];
 static gb_oam_entry_t oam[GB_MAX_SPRITES];
@@ -174,7 +141,7 @@ int main(void)
     uart_puts("[main] cut to "); uart_putdec(CELEBI_FRAMES);
     uart_puts(" frames × "); uart_putdec(META_TPF); uart_puts(" tiles\n");
 
-    /* BG: DMG dusk pastoral — banded sky with chunky dither, a low sun,
+    /* BG: CGB afternoon pastoral — banded sky with chunky dither, a low sun,
      * pine treeline silhouette, and a quiet grass field for the walk
      * path.  Tiles are ASCII art, '0' = lightest shade .. '3' = darkest. */
     enum {
@@ -284,11 +251,42 @@ int main(void)
     bg_map[3*GB_MAP_W+13] = T_BIRD;
     bg_map[4*GB_MAP_W+10] = T_BIRD;
 
-    /* warm DMG-green ramp, lightest -> darkest */
-    bg_palette[0] = 0xFF9BBC0F;
-    bg_palette[1] = 0xFF8BAC0F;
-    bg_palette[2] = 0xFF306230;
-    bg_palette[3] = 0xFF0F380F;
+    /* GBC palette assignment — Celebi is a Game Boy COLOR sheet, so
+     * the scene uses real CGB colors: per-tile palette attributes pick
+     * one of five 4-color palettes (tile art shades 0=light..3=dark). */
+    for (int x = 0; x < GB_MAP_W; x++) {
+        for (int y = 0; y < 6; y++)  bg_attr[y*GB_MAP_W+x] = 0;  /* sky   */
+        bg_attr[6*GB_MAP_W+x] = 2;                               /* trees */
+        bg_attr[7*GB_MAP_W+x] = 2;
+        for (int y = 8; y < 16; y++) bg_attr[y*GB_MAP_W+x] = 3;  /* field */
+        for (int y = 16; y < GB_MAP_H; y++)
+            bg_attr[y*GB_MAP_W+x] = 4;                           /* fore  */
+    }
+    for (int ty = 0; ty < 3; ty++)                               /* sun   */
+        for (int tx = 0; tx < 3; tx++)
+            bg_attr[(3+ty)*GB_MAP_W + 4+tx] = 1;
+
+    /* pal0 sky: afternoon blues, deep zenith -> pale horizon */
+    bg_palette[0]  = 0xFF8AC8F0; bg_palette[1]  = 0xFF5EA8E0;
+    bg_palette[2]  = 0xFF3678C0; bg_palette[3]  = 0xFF1E4E94;
+    /* pal1 sun: pale gold disc, warm halo */
+    bg_palette[4]  = 0xFFFFF6C8; bg_palette[5]  = 0xFFFFD24E;
+    bg_palette[6]  = 0xFFF0A030; bg_palette[7]  = 0xFFC87018;
+    /* pal2 treeline: sky behind, forest green silhouette */
+    bg_palette[8]  = 0xFF8AC8F0; bg_palette[9]  = 0xFF4E9A50;
+    bg_palette[10] = 0xFF2E7038; bg_palette[11] = 0xFF16421E;
+    /* pal3 walk field: lush greens */
+    bg_palette[12] = 0xFFB0E080; bg_palette[13] = 0xFF88C860;
+    bg_palette[14] = 0xFF58A048; bg_palette[15] = 0xFF2E6E30;
+    /* pal4 foreground: pink blooms over deep grass */
+    bg_palette[16] = 0xFFF26A8A; bg_palette[17] = 0xFF88C860;
+    bg_palette[18] = 0xFF3E7C36; bg_palette[19] = 0xFF234E24;
+
+    /* (legacy DMG ramp kept in pal7 for reference/experiments) */
+    bg_palette[28] = 0xFF9BBC0F;
+    bg_palette[29] = 0xFF8BAC0F;
+    bg_palette[30] = 0xFF306230;
+    bg_palette[31] = 0xFF0F380F;
 
     spr_palette[0] = 0x00000000;
     spr_palette[1] = celebi_pal[1];
@@ -303,7 +301,7 @@ int main(void)
     dcache_clean_range(FB1_ADDR, LCD_FB_BYTES);
 
     gb_bg_t bg = {
-        .chr=bg_chr, .map=bg_map, .map_attr=NULL,
+        .chr=bg_chr, .map=bg_map, .map_attr=bg_attr,
         .palette=bg_palette, .scroll_x=0, .scroll_y=0, .enabled=1,
     };
 

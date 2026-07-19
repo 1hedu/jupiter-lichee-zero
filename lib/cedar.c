@@ -315,6 +315,11 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
 }
 
 /* ================================================================== */
+/* Where the decoder leaves its NV12 frame. Exposed for Mode 4 CINEMA
+ * (video_mode4_nv12 scans these out directly — no ARGB conversion). */
+uint32_t cedar_dec_luma_addr(void)   { return BUF_LUMA; }
+uint32_t cedar_dec_chroma_addr(void) { return BUF_CHROMA; }
+
 /* NV12 → ARGB into a destination buffer                                */
 /* ================================================================== */
 void cedar_nv12_to_argb(uint32_t *dst, uint32_t dst_pitch,

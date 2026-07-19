@@ -12,6 +12,11 @@
 - **Hardware-accelerated 2D pipeline** — VI0 (game, double-buffered),
   VI1 (sprite), UI0 (overlay, double-buffered) composited by the DE2
   mixer. NEON-optimized framebuffer fills (1.2 GB/s) and sprite blits.
+- **Jupiter Modes** — numbered hardware-native display configurations
+  (an SNES homage): pure DE2 layer stacks with zero software
+  compositing, from single-plane FLAT up to Mode 4 CINEMA (NV12
+  direct scanout of Cedar decode through the hardware color-space
+  converter). See [`docs/VIDEO_MODES.md`](docs/VIDEO_MODES.md).
 - **Audio stack** — 4-channel 48 kHz PCM mixer; NES APU + GameBoy APU
   + SC-55 MIDI emulator (Nuked-SC55) + MT-32 emulator (Munt) + Genesis
   FM (Nuked-OPN2). Single-call bring-up via `audio_quickstart()`.
@@ -152,6 +157,7 @@ nearest-palette match for the PPU to render:
 
 **Video** — `cedar_video` (H.264 decode), `cedar_video_av` (H.264 +
 audio sync), `cedar_jpeg` (small H.264 I-frame decode probe),
+`mode4_cinema` (NV12 direct-scanout bring-up test),
 `av_demo` (multi-system audio + visuals showcase).
 
 **Storage** — `sdmmc`, `sdmmc_music`, `fs_test`, `cpak_browser`,

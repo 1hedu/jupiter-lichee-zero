@@ -199,6 +199,24 @@
 #define VI1_TOP_LADDR0(ov)  REG32(VI1 + 0x18 + 0x30*(ov))
 #define VI1_OVL_SIZE(n)     REG32(VI1 + 0xE8 + 0x04*(n))
 
+/* VI layer ATTR fields (DE2, per Linux sun8i_vi_layer.h):
+ *   bit0 = enable, bits[12:8] = format, bit15 = RGB mode.
+ * RGB formats need bit15 set; YUV formats need it clear. */
+#define VI_ATTR_EN          BIT(0)
+#define VI_ATTR_RGB         BIT(15)
+#define VI_FMT_XRGB8888     ((4U << 8) | VI_ATTR_RGB)   /* = the 0x8400 in 0x00008401 */
+#define VI_FMT_NV12         (8U << 8)                    /* YUV 4:2:0 semi-planar */
+
+/* Per-channel color-space converter (CCSC) — converts a YUV VI layer to
+ * RGB before blending. V3s mixer0 layout: channel 0 CSC at +0xAA050,
+ * channel 1 at +0xFA050 (Linux sun8i_csc.h CCSC00/CCSC01). 12 coeff
+ * words at +0x10, enable = bit0 of +0x00. */
+#define CSC0_BASE           (MIXER0_BASE + 0xAA050)
+#define CSC1_BASE           (MIXER0_BASE + 0xFA050)
+#define CSC_CTRL(base)      REG32((base) + 0x00)
+#define CSC_COEFF(base,i)   REG32((base) + 0x10 + 4*(i))
+#define CSC_EN              BIT(0)
+
 /* Backward compat — existing code uses VI_xxx for VI0 */
 #define VI                  VI0
 #define VI_ATTR(ov)         VI0_ATTR(ov)

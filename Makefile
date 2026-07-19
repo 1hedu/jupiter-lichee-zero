@@ -26,7 +26,7 @@ LDFLAGS  = -T $(LDSCRIPT)
 # Library sources (always linked)
 LIB_SRCS = lib/uart.c lib/midi.c lib/timer.c lib/mem.c lib/video.c lib/tiles.c lib/mmu.c \
            lib/sprite.c lib/snes.c lib/genesis.c lib/audio.c lib/genesis_asm.S \
-           lib/nes.c lib/gb.c lib/hstimer.c lib/input.c \
+           lib/nes.c lib/gb.c lib/sheet.c lib/hstimer.c lib/input.c \
            lib/libc_shim.c lib/irq.c lib/sram.c lib/cedar.c lib/cedar_enc.c lib/si5351.c lib/ym3438_hw.c \
            lib/sdmmc.c lib/cpak.c lib/n64_joybus.c \
            third_party/dlmalloc/dlmalloc_jupiter.c

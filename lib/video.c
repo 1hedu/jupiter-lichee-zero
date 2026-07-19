@@ -252,3 +252,105 @@ void video_wait_vblank(void)
     /* Ack it (W0C: write back with bit 15 cleared) */
     TCON0_GINT0 = TCON0_GINT0 & ~(1u << 15);
 }
+
+/* ================================================================
+ *  Jupiter Modes — numbered hardware-native display configurations
+ *  (an SNES homage: each mode is a fixed DE2 layer stack, zero
+ *  software compositing — the mixer does all the work).
+ *
+ *    Mode 0  FLAT     VI0 only
+ *    Mode 1  BG+OBJ   VI0 + UI0 alpha overlay        (video_init default)
+ *    Mode 2  TRIPLANE VI0 + VI1 window + UI0
+ *    Mode 3  GHOST    Mode 1 with programmable global alpha on UI0
+ *    Mode 4  CINEMA   VI0 scans out NV12 directly (CSC in hardware),
+ *                     UI0 stays ARGB on top — Cedar decode → glass
+ *                     with zero CPU pixel work
+ *    Mode 6  RASTER   Mode 1 + hstimer scanline hook (see hstimer.h);
+ *                     register-poke per line, no redraws
+ *    Mode 7  —        affine stays software on the V3s (the NEON
+ *                     mode7_scanline helpers); video_mode(7) selects
+ *                     the Mode 1 stack and the rest is up to you
+ *
+ *  Call after video_init(). See docs/VIDEO_MODES.md.
+ * ================================================================ */
+
+void video_mode(int mode)
+{
+    switch (mode) {
+    case 0:  /* FLAT: only pipe 0 (VI0) */
+        BLD_ROUTE    = ROUTE_P(0, 0);
+        BLD_PIPE_CTL = PIPE_EN(0) | PIPE_FC(0);
+        break;
+    case 2:  /* TRIPLANE: caller positions VI1 via video_vi1_init() */
+        BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 2) | ROUTE_P(2, 1);
+        BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
+        break;
+    default: /* 1 / 3 / 6 / 7: the standard VI0 + UI0 stack */
+        UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(0xFF);
+        BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 2);
+        BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_FC(0);
+        break;
+    }
+    MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* Mode 3 GHOST: hardware fade of the whole UI0 overlay (0=invisible,
+ * 255=opaque). Per-pixel alpha still applies on top of this. */
+void video_mode3_alpha(uint8_t alpha)
+{
+    UI_ATTR(0) = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(alpha);
+    MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* Mode 4 CINEMA: point VI0 straight at an NV12 frame (e.g. the Cedar
+ * decoder's output — cedar_dec_luma_addr()/cedar_dec_chroma_addr()).
+ * stride is the mb-aligned luma width; the frame is shown 1:1 in a
+ * window at (x,y) (no scaler on V3s silicon). The hardware CSC
+ * (BT601 limited range, per Linux sun8i_csc.c) converts during scan.
+ * UNVERIFIED ON SILICON — see docs/VIDEO_MODES.md. */
+void video_mode4_nv12(uint32_t luma, uint32_t chroma,
+                      uint32_t w, uint32_t h, uint32_t stride,
+                      uint32_t x, uint32_t y)
+{
+    static const uint32_t yuv2rgb_bt601[12] = {
+        0x000004A8, 0x00000000, 0x00000662, 0xFFFC8451,
+        0x000004A8, 0xFFFFFE6F, 0xFFFFFCC0, 0x00021E4D,
+        0x000004A8, 0x00000811, 0x00000000, 0xFFFBACA9,
+    };
+
+    VI_ATTR(0)       = VI_ATTR_EN | VI_FMT_NV12;
+    VI_MBSIZE(0)     = WH(w, h);
+    VI_COOR(0)       = 0;
+    VI_PITCH0(0)     = stride;        /* luma: 1 byte/px            */
+    VI_PITCH1(0)     = stride;        /* interleaved UV, same bytes */
+    VI_PITCH2(0)     = stride;
+    VI_TOP_LADDR0(0) = luma;
+    VI_TOP_LADDR1(0) = chroma;
+    VI_OVL_SIZE(0)   = WH(w, h);
+
+    /* Blender pipe 0 becomes a positioned window of the video frame.
+     * OFFSET is plain (y<<16)|x — unlike the size regs, no minus-one
+     * encoding (Linux sun8i BLEND_ATTR_COORD). */
+    BLD_INSIZE(0) = WH(w, h);
+    BLD_OFFSET(0) = (y << 16) | x;
+
+    for (int i = 0; i < 12; i++)
+        CSC_COEFF(CSC0_BASE, i) = yuv2rgb_bt601[i];
+    CSC_CTRL(CSC0_BASE) = CSC_EN;
+
+    MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* Leave Mode 4: restore VI0 to full-screen XRGB scanout. */
+void video_mode4_off(void)
+{
+    CSC_CTRL(CSC0_BASE) = 0;
+    VI_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
+    VI_MBSIZE(0)     = WH(LCD_W, LCD_H);
+    VI_PITCH0(0)     = LCD_PITCH;
+    VI_TOP_LADDR0(0) = FB0_ADDR;
+    VI_OVL_SIZE(0)   = WH(LCD_W, LCD_H);
+    BLD_INSIZE(0) = WH(LCD_W, LCD_H);
+    BLD_OFFSET(0) = 0;
+    MIX_GLB_DBUF = DBUF_EN;
+}

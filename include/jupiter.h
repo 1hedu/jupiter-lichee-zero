@@ -34,6 +34,17 @@ void video_commit(void);                   /* just commit the double buffer */
 void video_vi1_init(uint32_t x, uint32_t y, uint32_t w, uint32_t h); /* PIP overlay */
 void video_wait_vblank(void);  /* Poll until TCON0 vblank */
 
+/* Jupiter Modes — numbered hardware-native DE2 layer stacks (an SNES
+ * homage; see docs/VIDEO_MODES.md). Call after video_init().
+ *   0 FLAT · 1 BG+OBJ · 2 TRIPLANE · 3 GHOST · 4 CINEMA · 6 RASTER
+ *   (7 stays software affine — the NEON mode7_scanline helpers) */
+void video_mode(int mode);
+void video_mode3_alpha(uint8_t alpha);           /* UI0 global alpha  */
+void video_mode4_nv12(uint32_t luma, uint32_t chroma,
+                      uint32_t w, uint32_t h, uint32_t stride,
+                      uint32_t x, uint32_t y);   /* NV12 direct scanout */
+void video_mode4_off(void);
+
 /* ---- tiles.c ---- */
 typedef uint32_t (*tile_color_fn)(uint8_t tile_id, uint32_t px, uint32_t py);
 
@@ -246,6 +257,8 @@ void cedar_nv12_to_argb(uint32_t *dst, uint32_t dst_pitch,
                         uint32_t w, uint32_t h);
 uint32_t cedar_enc_stream_addr(void);  /* encoded bitstream location */
 uint32_t cedar_enc_stream_size(void);
+uint32_t cedar_dec_luma_addr(void);    /* decoder NV12 output planes  */
+uint32_t cedar_dec_chroma_addr(void);  /*   (feed video_mode4_nv12)   */
 void dcache_invalidate_range(uint32_t addr, uint32_t size);
 
 /* ---- sram.c ---- */

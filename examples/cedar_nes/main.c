@@ -21,6 +21,7 @@
  */
 #include "jupiter.h"
 #include "nes.h"
+#include "sheet.h"
 #include "pmu.h"
 #include <string.h>
 
@@ -98,54 +99,19 @@ static void build_atlas(void)
     }
 }
 
-/* ----- Nearest-palette match (decoded ARGB → 0-3 color index) ----- */
-static int nearest_pal_idx(uint32_t c)
-{
-    int best = 0, bd = 999999;
-    int cr = (c >> 16) & 0xFF, cg = (c >> 8) & 0xFF, cb = c & 0xFF;
-    for (int i = 0; i < 4; i++) {
-        uint32_t p = vinci_pal_rgb[i];
-        int dr = cr - (int)((p>>16)&0xFF);
-        int dg = cg - (int)((p>>8)&0xFF);
-        int db = cb - (int)(p&0xFF);
-        int d = dr*dr + dg*dg + db*db;
-        if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-}
-
-/* ----- Cut decoded atlas → NES 2bpp tiles per frame --------------- */
+/* ----- Cut decoded atlas → NES 2bpp tiles per frame (lib/sheet.c) -
+ * bg_thresh = 0: every atlas pixel goes through the pure nearest-
+ * palette match against the 4-color NES sprite palette, exactly like
+ * the old local nearest_pal_idx() path. */
 static void cut_atlas_to_tiles(void)
 {
-    for (int f = 0; f < ANIM_FRAMES; f++) {
-        int frame_x0 = f * META_PW;
-        static uint8_t ci_grid[META_PW * META_PH];
-
-        for (int y = 0; y < META_PH; y++)
-            for (int x = 0; x < META_PW; x++)
-                ci_grid[y * META_PW + x] =
-                    nearest_pal_idx(atlas[y * ATLAS_W + (frame_x0 + x)]);
-
-        uint8_t *out = &meta_chr[f * META_TILES * 16];
-        for (int ty = 0; ty < META_TH; ty++) {
-            for (int tx = 0; tx < META_TW; tx++) {
-                uint8_t *tile = out + (ty * META_TW + tx) * 16;
-                for (int row = 0; row < 8; row++) {
-                    uint8_t bp0 = 0, bp1 = 0;
-                    for (int col = 0; col < 8; col++) {
-                        int px = tx * 8 + col;
-                        int py = ty * 8 + row;
-                        uint8_t ci = (px < META_PW && py < META_PH)
-                                     ? ci_grid[py * META_PW + px] : 0;
-                        bp0 |= ((ci & 1) << (7 - col));
-                        bp1 |= (((ci >> 1) & 1) << (7 - col));
-                    }
-                    tile[row] = bp0;
-                    tile[row + 8] = bp1;
-                }
-            }
-        }
-    }
+    sheet_t sh;
+    sheet_init(&sh, atlas, ATLAS_W, ATLAS_H);
+    sh.bg_thresh = 0;
+    for (int f = 0; f < ANIM_FRAMES; f++)
+        sheet_cut(&sh, f * META_PW, 0, META_PW, META_PH, 1,
+                  SHEET_FMT_NES_2BPP, 0, vinci_pal_rgb, 0, 4,
+                  &meta_chr[f * META_TILES * 16], META_TILES);
 }
 
 static uint8_t bg_chr[256 * 16];
