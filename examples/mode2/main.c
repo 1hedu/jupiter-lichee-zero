@@ -14,7 +14,7 @@
 
 /* ---- Tiles ---- */
 #define BG1_TILES 4
-#define BG2_TILES 8
+#define BG2_TILES 18
 static uint8_t bg1_td[BG1_TILES * 32];
 static uint8_t bg2_td[BG2_TILES * 32];
 
@@ -61,49 +61,79 @@ static void init_tiles(void)
         d[y*8+x] = (x==0||x==7) ? 1 : ((x&1) ? 4 : 3);
       set4(bg1_td, 2, d); } /* alternating plank (for variety) */
     { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++)
-        d[y*8+x] = (x==0||x==7) ? 1 : ((x&1) ? 3 : 4);
-      set4(bg1_td, 3, d); } /* same as tile 1 */
+        d[y*8+x] = (y<2) ? ((x==0||x==7) ? 1 : 6)
+                         : ((x==0||x==7) ? 1 : ((x&1) ? 3 : 4));
+      set4(bg1_td, 3, d); } /* top plank row: sunlit rim on plank tops */
 
     /* BG2 (static scene):
      * 0: transparent
-     * 1: sky light, 2: sky dark, 3: cliff, 4: cliff slope-L, 5: slope-R
-     * 6: ground/earth, 7: grass top */
+     * 1: sky dusk, 2: chasm shadow, 3: cliff, 4: cliff rim battlement
+     * 6: ground/earth, 7: grass top
+     * 8..10: sky bands rose/amber/glow, 11..13: band dither teeth
+     * 14..17: low sun disc (2x2 tiles) */
     fill4(bg2_td, 1, 1);
     fill4(bg2_td, 2, 2);
     fill4(bg2_td, 3, 3);
-    { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++)
-        d[y*8+x] = (x >= (7-y)) ? 3 : 0;
-      set4(bg2_td, 4, d); }
-    { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++)
-        d[y*8+x] = (x <= y) ? 3 : 0;
-      set4(bg2_td, 5, d); }
+    { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++) {
+        int b = (x&4) ? 2 : 6;              /* battlement boundary */
+        d[y*8+x] = (y < b) ? 10 : (y == b) ? 7 : 3;
+      } set4(bg2_td, 4, d); } /* cliff-top teeth, sun-rim on the edge */
     { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++)
         d[y*8+x] = ((x+y*2)&3)==0 ? 5 : 4;
       set4(bg2_td, 6, d); } /* earth */
     { uint8_t d[64]; for (int y=0;y<8;y++) for (int x=0;x<8;x++)
-        d[y*8+x] = y<3 ? 6 : (((x+y*2)&3)==0 ? 5 : 4);
-      set4(bg2_td, 7, d); } /* grass top */
+        d[y*8+x] = y<1 ? 11 : y<3 ? 6 : (((x+y*2)&3)==0 ? 5 : 4);
+      set4(bg2_td, 7, d); } /* grass top, lit edge */
+    fill4(bg2_td, 8, 8);   /* rose band */
+    fill4(bg2_td, 9, 9);   /* amber band */
+    fill4(bg2_td, 10, 10); /* glow band */
+    /* battlement dither tiles: 4px teeth between adjacent sky bands */
+    { static const uint8_t pair[3][2] = { {1,8}, {8,9}, {9,10} };
+      for (int i = 0; i < 3; i++) {
+        uint8_t d[64];
+        for (int y=0;y<8;y++) for (int x=0;x<8;x++)
+            d[y*8+x] = (y < ((x&4)?2:6)) ? pair[i][0] : pair[i][1];
+        set4(bg2_td, 11+i, d);
+      } }
+    /* low sun: 16x16 disc over the amber/glow horizon bands */
+    for (int q = 0; q < 4; q++) {
+        uint8_t d[64];
+        for (int y=0;y<8;y++) for (int x=0;x<8;x++) {
+            int gx = (q&1)*8+x, gy = (q>>1)*8+y;
+            int dx = gx-8, dy = gy-11;
+            uint8_t bg = (gy<8) ? ((y < ((x&4)?2:6)) ? 9 : 10) : 10;
+            d[y*8+x] = (dx*dx + dy*dy < 49) ? 12 : bg;
+        }
+        set4(bg2_td, 14+q, d);
+    }
 }
 
 /* ---- Palettes ---- */
 static const uint32_t bg1_pal[16] = {
     0x00000000,     /* 0: transparent */
-    0xFFAA8844,     /* 1: rope */
-    0xFF6A4A2A,     /* 2: wood dark */
-    0xFFA08050,     /* 3: wood light */
-    0xFF8A6A40,     /* 4: wood mid */
-    0xFF4A3020,     /* 5: plank edge */
-    [6 ... 15] = 0xFF000000,
+    0xFFC89858,     /* 1: rope, sunlit */
+    0xFF3A241A,     /* 2: wood dark */
+    0xFF7A4E2E,     /* 3: wood light, warm-lit */
+    0xFF5A3822,     /* 4: wood mid */
+    0xFF2A1810,     /* 5: plank edge */
+    0xFFF0B068,     /* 6: golden rim on plank tops */
+    [7 ... 15] = 0xFF000000,
 };
 static const uint32_t bg2_pal[16] = {
     0x00000000,     /* 0: transparent */
-    0xFF6A9ADA,     /* 1: sky light */
-    0xFF4A7ABA,     /* 2: sky dark */
-    0xFF7A6A5A,     /* 3: cliff/stone */
-    0xFF5A4A38,     /* 4: earth */
-    0xFF4A3A28,     /* 5: earth dark */
-    0xFF40A030,     /* 6: grass */
-    [7 ... 15] = 0xFF3A5A8A,
+    0xFF3E3A68,     /* 1: sky dusk violet-blue (top) */
+    0xFF241F38,     /* 2: chasm shadow */
+    0xFF54382C,     /* 3: cliff, warm-lit dark */
+    0xFF483226,     /* 4: earth */
+    0xFF32211A,     /* 5: earth dark */
+    0xFF6A8A38,     /* 6: grass, warm-tinted */
+    0xFFC08048,     /* 7: cliff rim highlight */
+    0xFFB05868,     /* 8: sky rose band */
+    0xFFE08850,     /* 9: sky amber band */
+    0xFFF6B468,     /* 10: horizon glow band */
+    0xFF9AB048,     /* 11: grass lit edge */
+    0xFFFFDC96,     /* 12: sun disc */
+    [13 ... 15] = 0xFF3E3A68,
 };
 
 /* ---- Maps ---- */
@@ -126,24 +156,39 @@ static void build_maps(void)
             /* BG1: bridge only. Transparent everywhere else. */
             uint16_t t1 = 0;
             if (x >= BRIDGE_START && x <= BRIDGE_END) {
-                if (y >= bridge_y && y <= bridge_y + 4)
+                if (y == bridge_y)
+                    t1 = SNES_ENTRY(3, 0, 0, 0, 0); /* top row: sunlit rim */
+                else if (y > bridge_y && y <= bridge_y + 4)
                     t1 = SNES_ENTRY(1 + (y & 1), 0, 0, 0, 0); /* alternating plank tiles */
             }
             bg1_map[y * MW + x] = t1;
 
             /* BG2: sky, cliffs, ground, pillars — all static */
             uint16_t t2;
-            if (y < 12)
-                t2 = SNES_ENTRY(1, 0, 0, 0, 0);  /* sky light */
-            else if (y < 16)
-                t2 = SNES_ENTRY(2, 0, 0, 0, 0);  /* sky dark */
-            else if (y == 16) {
-                int m = x % 18;
-                t2 = (m < 9) ? SNES_ENTRY(4,0,0,0,0) : SNES_ENTRY(5,0,0,0,0);
-            } else if (y >= 17 && y < 20)
+            if (y < 9)
+                t2 = SNES_ENTRY(1, 0, 0, 0, 0);   /* dusk violet-blue */
+            else if (y == 9)
+                t2 = SNES_ENTRY(11, 0, 0, 0, 0);  /* teeth dusk/rose */
+            else if (y == 10 || y == 11)
+                t2 = SNES_ENTRY(8, 0, 0, 0, 0);   /* rose */
+            else if (y == 12)
+                t2 = SNES_ENTRY(12, 0, 0, 0, 0);  /* teeth rose/amber */
+            else if (y == 13)
+                t2 = SNES_ENTRY(9, 0, 0, 0, 0);   /* amber */
+            else if (y == 14 || y == 15) {
+                /* horizon: teeth amber/glow, then glow — low sun at cols 30-31 */
+                if (x == 30 || x == 31)
+                    t2 = SNES_ENTRY(14 + (x-30) + (y-14)*2, 0, 0, 0, 0);
+                else
+                    t2 = (y == 14) ? SNES_ENTRY(13, 0, 0, 0, 0)
+                                   : SNES_ENTRY(10, 0, 0, 0, 0);
+            }
+            else if (y == 16)
+                t2 = SNES_ENTRY(4, 0, 0, 0, 0);   /* cliff rim battlement */
+            else if (y >= 17 && y < 20)
                 t2 = SNES_ENTRY(3, 0, 0, 0, 0);  /* cliff */
             else
-                t2 = SNES_ENTRY(2, 0, 0, 0, 0);  /* dark / abyss */
+                t2 = SNES_ENTRY(2, 0, 0, 0, 0);  /* chasm shadow */
 
             /* Ground on sides — priority 1 so it draws in front of bridge */
             if (x <= PILLAR_L_COL || x >= PILLAR_R_COL) {
@@ -196,7 +241,7 @@ void main(void)
     uint32_t back_fb = FB1_ADDR, front_fb = FB0_ADDR;
     uint32_t *ovl = (uint32_t *)OVL_ADDR;
     uint32_t frame = 0;
-    uint32_t backdrop = 0xFF4A7ABA;
+    uint32_t backdrop = 0xFFF6B468;
 
     bg1.scroll_y = 60;
     bg2.scroll_y = 60;  /* SAME scroll_y — bridge must align with pillars */
