@@ -96,3 +96,7 @@ screenshots/
 /MT-32_v1.07_legacy_ROM_files.zip
 /Roland SC-55 mkII.zip
 /jupiter-mars-pico.tar.gz
+
+# Mercury local build deps (cloned per mercury/README.md "Building")
+mercury/external/
+mercury/build/

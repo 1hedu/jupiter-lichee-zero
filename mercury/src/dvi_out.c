@@ -20,7 +20,6 @@
 #include "jupiter32x.h"
 #include "dvi.h"
 #include "dvi_timing.h"
-#include "common_dvi_pin_configs.h"
 #include "tmds_encode.h"
 
 /* DVI instance */
