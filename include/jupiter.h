@@ -36,14 +36,24 @@ void video_wait_vblank(void);  /* Poll until TCON0 vblank */
 
 /* Jupiter Modes — numbered hardware-native DE2 layer stacks (an SNES
  * homage; see docs/VIDEO_MODES.md). Call after video_init().
- *   0 FLAT · 1 BG+OBJ · 2 TRIPLANE · 3 GHOST · 4 CINEMA · 6 RASTER
- *   (7 stays software affine — the NEON mode7_scanline helpers) */
+ *   0 FLAT · 1 BG+OBJ · 2 TRIPLANE · 3 GHOST · 4 CINEMA · 5 SPLIT
+ *   6 RASTER · 7 AFFINE (hw lineshift + NEON sampling) */
 void video_mode(int mode);
 void video_mode3_alpha(uint8_t alpha);           /* UI0 global alpha  */
 void video_mode4_nv12(uint32_t luma, uint32_t chroma,
                       uint32_t w, uint32_t h, uint32_t stride,
                       uint32_t x, uint32_t y);   /* NV12 direct scanout */
 void video_mode4_off(void);
+void video_mode5_split(uint32_t fb_top, uint32_t fb_bottom); /* 2 viewports */
+void video_mode5_off(void);
+/* Mode 7 hardware half: hstimer-driven per-band X shift of the VI0
+ * scan address (line-shear/wave with zero CPU pixel work). offs[] are
+ * signed pixel shifts, one entry per lines_per_band scanlines. Call
+ * video_mode7_line_reset(front_fb) right after video_wait_vblank(). */
+void video_mode7_lineshift(const int16_t *offs, uint32_t nsteps,
+                           uint32_t lines_per_band);
+void video_mode7_line_reset(uint32_t base_addr);
+void video_mode7_lineshift_off(void);
 
 /* ---- tiles.c ---- */
 typedef uint32_t (*tile_color_fn)(uint8_t tile_id, uint32_t px, uint32_t py);

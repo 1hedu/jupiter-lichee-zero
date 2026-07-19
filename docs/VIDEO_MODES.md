@@ -21,9 +21,26 @@ itself leaves you in Mode 1.
 | 2    | TRIPLANE | VI0 + UI0 + VI1 window             | 3 planes, VI1 positioned by the blender (`video_vi1_init`) |
 | 3    | GHOST    | VI0 + UI0 (global alpha)           | whole-overlay hardware fade: `video_mode3_alpha(0..255)` |
 | 4    | CINEMA   | VI0 **NV12** window + UI0          | YUV→RGB CSC during scan; Cedar decode → glass, zero CPU pixels |
-| 5    | —        | *(reserved)*                       | second full playfield / split-screen, once colorkey is proven |
-| 6    | RASTER   | Mode 1 + hstimer scanline hook     | per-line register pokes (line-scroll, splits) — see `hstimer.h` and the `hstimer_raster` example |
-| 7    | —        | Mode 1                             | affine stays **software** on the V3s (`mode7_scanline`, NEON). The number is reserved out of respect. |
+| 5    | SPLIT    | VI0 top half + VI1 bottom half + UI0 | two independent hardware viewports (`video_mode5_split`) — 2-player split with zero CPU compositing |
+| 6    | RASTER   | Mode 1 + hstimer scanline hook     | per-line register pokes (color/alpha splits) — see `hstimer.h` and the `hstimer_raster` example |
+| 7    | AFFINE   | Mode 1 + hstimer lineshift         | hardware per-band scan-address shifts (`video_mode7_lineshift`) + NEON texture sampling (`mode7_scanline`) |
+
+## Mode 7 — hardware where hardware wins
+
+The V3s display path cannot resample pixels: the VSU is fused off
+(`scaler_probe` proves it) and the DE2 has no rotation unit, so the
+texture *sampling* of an affine floor is NEON (`mode7_scanline` /
+`iso_scanline`) no matter what. But the other half of the SNES Mode 7
+trick — changing parameters **per scanline** — is exactly what the
+hardware here is good at: `video_mode7_lineshift()` arms an hstimer
+scanline ISR that re-points VI0's scan address every N lines with the
+mid-frame `GLB_DBUFF` latch (the register+latch technique
+`hstimer_raster` verified on silicon for the backdrop color). That
+gives full-screen line-shear, waves, and horizon splits for one
+register write per band and **zero** CPU pixel work. Mid-frame LADDR
+latching specifically is unverified on silicon — the `jupiter_modes`
+tour's Mode 7 phase is its bring-up test (the rotozoom sways without
+any change to the rendered frame if it works; static if not).
 
 ## Mode 4 CINEMA in one paragraph
 

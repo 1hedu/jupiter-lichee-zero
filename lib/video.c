@@ -10,6 +10,7 @@
  *   UI0 (pipe 1, ch 2): Overlay/HUD, ARGB8888, per-pixel alpha
  */
 #include "jupiter.h"
+#include "hstimer.h"   /* Mode 7 lineshift rides an hstimer channel */
 
 static void delay(volatile uint32_t n) { while (n--); }
 
@@ -265,11 +266,13 @@ void video_wait_vblank(void)
  *    Mode 4  CINEMA   VI0 scans out NV12 directly (CSC in hardware),
  *                     UI0 stays ARGB on top — Cedar decode → glass
  *                     with zero CPU pixel work
+ *    Mode 5  SPLIT    two hardware viewports (video_mode5_split)
  *    Mode 6  RASTER   Mode 1 + hstimer scanline hook (see hstimer.h);
  *                     register-poke per line, no redraws
- *    Mode 7  —        affine stays software on the V3s (the NEON
- *                     mode7_scanline helpers); video_mode(7) selects
- *                     the Mode 1 stack and the rest is up to you
+ *    Mode 7  AFFINE   hardware per-band lineshift (video_mode7_
+ *                     lineshift) + NEON mode7_scanline sampling —
+ *                     the display path can't resample (VSU fused
+ *                     off), so hw does the per-line half of the trick
  *
  *  Call after video_init(). See docs/VIDEO_MODES.md.
  * ================================================================ */
@@ -283,6 +286,10 @@ void video_mode(int mode)
         break;
     case 2:  /* TRIPLANE: caller positions VI1 via video_vi1_init() */
         BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 2) | ROUTE_P(2, 1);
+        BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
+        break;
+    case 5:  /* SPLIT: two hw viewports (video_mode5_split), UI0 on top */
+        BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 1) | ROUTE_P(2, 2);
         BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
         break;
     default: /* 1 / 3 / 6 / 7: the standard VI0 + UI0 stack */
@@ -353,4 +360,107 @@ void video_mode4_off(void)
     BLD_INSIZE(0) = WH(LCD_W, LCD_H);
     BLD_OFFSET(0) = 0;
     MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* Mode 5 SPLIT: two independent hardware viewports — VI0 scans the top
+ * half from fb_top, VI1 scans the bottom half from fb_bottom, UI0 stays
+ * a full-screen overlay above both. Pure blender positioning: each
+ * playfield is its own framebuffer with its own scroll/content, the
+ * classic 2-player split with zero CPU compositing. Call after
+ * video_mode(5). Buffers are full LCD_W-pitch, LCD_H/2 rows tall. */
+void video_mode5_split(uint32_t fb_top, uint32_t fb_bottom)
+{
+    VI_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
+    VI_MBSIZE(0)     = WH(LCD_W, LCD_H / 2);
+    VI_COOR(0)       = 0;
+    VI_PITCH0(0)     = LCD_PITCH;
+    VI_TOP_LADDR0(0) = fb_top;
+    VI_OVL_SIZE(0)   = WH(LCD_W, LCD_H / 2);
+    BLD_FCOLOR(0)    = 0xFF000000;
+    BLD_INSIZE(0)    = WH(LCD_W, LCD_H / 2);
+    BLD_OFFSET(0)    = 0;
+    BLD_MODE(0)      = BLEND_DEF;
+
+    VI1_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
+    VI1_MBSIZE(0)     = WH(LCD_W, LCD_H / 2);
+    VI1_COOR(0)       = 0;
+    VI1_PITCH0(0)     = LCD_PITCH;
+    VI1_TOP_LADDR0(0) = fb_bottom;
+    VI1_OVL_SIZE(0)   = WH(LCD_W, LCD_H / 2);
+    BLD_FCOLOR(1)     = 0xFF000000;
+    BLD_INSIZE(1)     = WH(LCD_W, LCD_H / 2);
+    BLD_OFFSET(1)     = ((LCD_H / 2) << 16) | 0;   /* plain (y<<16)|x */
+    BLD_MODE(1)       = BLEND_DEF;
+
+    UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(0xFF);
+    BLD_INSIZE(2) = WH(LCD_W, LCD_H);
+    BLD_OFFSET(2) = 0;
+    BLD_MODE(2)   = BLEND_DEF;
+
+    MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* Leave Mode 5: restore VI0 to full-screen scanout. */
+void video_mode5_off(void)
+{
+    VI_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
+    VI_MBSIZE(0)     = WH(LCD_W, LCD_H);
+    VI_PITCH0(0)     = LCD_PITCH;
+    VI_TOP_LADDR0(0) = FB0_ADDR;
+    VI_OVL_SIZE(0)   = WH(LCD_W, LCD_H);
+    BLD_INSIZE(0) = WH(LCD_W, LCD_H);
+    BLD_OFFSET(0) = 0;
+    BLD_INSIZE(1) = WH(LCD_W, LCD_H);
+    BLD_OFFSET(1) = 0;
+    MIX_GLB_DBUF = DBUF_EN;
+}
+
+/* ---- Mode 7 AFFINE: the hardware half ----
+ * The V3s display path cannot resample pixels (VSU fused off, no
+ * rotation in DE2), so affine texture SAMPLING is the NEON
+ * mode7_scanline/iso_scanline helpers. What the hardware CAN do is
+ * the other half of the SNES trick: per-scanline parameter changes.
+ * These helpers ride an hstimer scanline ISR and re-point VI0's
+ * scan address every N lines with the mid-frame GLB_DBUFF latch (the
+ * technique hstimer_raster proved for the backdrop register) — full
+ * -screen line-shear/wave/split for the cost of a register write per
+ * band, zero CPU pixel work. LADDR mid-frame latching is
+ * UNVERIFIED ON SILICON — see docs/VIDEO_MODES.md. */
+static const int16_t *m7_offs;
+static uint32_t m7_nsteps, m7_step, m7_base;
+static volatile uint32_t m7_line;
+
+static void video_mode7_isr(void)
+{
+    if (!m7_offs) return;
+    uint32_t i = m7_line++;
+    if (i >= m7_nsteps) return;
+    VI_TOP_LADDR0(0) = m7_base + (uint32_t)((int32_t)m7_offs[i] * 4);
+    REG32(MIXER0_BASE + 0x08) = 1;      /* GLB_DBUFF: latch mid-frame */
+}
+
+/* Arm per-band line shift: offs[i] = signed X pixel shift for band i,
+ * one band every `lines_per_band` scanlines. Requires irq_init +
+ * irq_global_enable; uses hstimer channel 1. */
+void video_mode7_lineshift(const int16_t *offs, uint32_t nsteps,
+                           uint32_t lines_per_band)
+{
+    m7_offs = offs; m7_nsteps = nsteps; m7_line = 0;
+    m7_step = lines_per_band;
+    m7_base = VI_TOP_LADDR0(0);
+    hstimer_set_repeating(1, lines_per_band, video_mode7_isr);
+}
+
+/* Call right after video_wait_vblank(): resync the band counter to the
+ * top of the frame and re-anchor the base scan address. */
+void video_mode7_line_reset(uint32_t base_addr)
+{
+    m7_base = base_addr;
+    m7_line = 0;
+}
+
+void video_mode7_lineshift_off(void)
+{
+    m7_offs = 0;
+    hstimer_stop(1);
 }

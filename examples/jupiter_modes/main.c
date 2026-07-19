@@ -8,10 +8,12 @@
  *   MODE 2 TRIPLANE  VI1 hardware window drops in (live pattern)
  *   MODE 3 GHOST     whole overlay breathes via hw global alpha
  *   MODE 4 CINEMA    VI0 scans the Cedar decoder's NV12 directly
+ *   MODE 5 SPLIT     two hardware viewports: dusk on top, a second
+ *                    playfield below, one overlay across both
  *   MODE 6 RASTER    hstimer scanline ISR strobes overlay alpha —
  *                    hardware venetian blinds, zero redraws
- *   MODE 7 SOFTWARE  the reserved number: NEON affine rotozoom
- *                    (checkerboards stay checkerboards)
+ *   MODE 7 AFFINE    NEON rotozoom sampling + HARDWARE per-band
+ *                    lineshift sway (checkerboards stay checkerboards)
  *
  * Everything on screen besides the Mode 7 rotozoom and the label text
  * is drawn ONCE — the tour itself is pure DE2 register work.
@@ -59,6 +61,7 @@ static const glyph_t font[] = {
     {'2',{".###.","#...#","....#","..##.",".#...","#....","#####"}},
     {'3',{"####.","....#","....#",".###.","....#","....#","####."}},
     {'4',{"#...#","#...#","#...#","#####","....#","....#","....#"}},
+    {'5',{"#####","#....","#....","####.","....#","....#","####."}},
     {'6',{".###.","#....","#....","####.","#...#","#...#",".###."}},
     {'7',{"#####","....#","...#.","..#..",".#...",".#...",".#..."}},
     {'+',{".....","..#..","..#..","#####","..#..","..#..","....."}},
@@ -179,6 +182,16 @@ static void raster_isr(void)
     REG32(0x01100000 + 0x08) = 1;   /* GLB_DBUFF: latch mid-frame */
 }
 
+/* Mode 7 hardware half: per-band X shifts, refreshed every frame */
+#define M7_BANDS (LCD_H / 8)
+static int16_t m7_shift[M7_BANDS];
+
+static void update_m7_shift(uint32_t frame)
+{
+    for (int i = 0; i < M7_BANDS; i++)
+        m7_shift[i] = (int16_t)((SIN(frame * 3 + i * 12) * 10) >> 8);
+}
+
 /* ================================================================
  * Mode 7: NEON affine rotozoom into the VI0 body (checkerboard!)
  * ================================================================ */
@@ -227,8 +240,9 @@ static const phase_t phases[] = {
     { 2, "MODE 2 TRIPLANE" },
     { 3, "MODE 3 GHOST FADE" },
     { 4, "MODE 4 CINEMA NV12" },
+    { 5, "MODE 5 SPLIT" },
     { 6, "MODE 6 RASTER BLINDS" },
-    { 7, "MODE 7 SOFTWARE AFFINE" },
+    { 7, "MODE 7 AFFINE" },
 };
 #define NUM_PHASES (int)(sizeof(phases) / sizeof(phases[0]))
 #define PHASE_FRAMES 360
@@ -291,6 +305,9 @@ int main(void)
         if (want != phase) {
             /* leave old phase */
             if (phase >= 0 && phases[phase].mode == 4) video_mode4_off();
+            if (phase >= 0 && phases[phase].mode == 5) video_mode5_off();
+            if (phase >= 0 && phases[phase].mode == 7)
+                video_mode7_lineshift_off();
             raster_on = 0;
             hstimer_stop(0);
 
@@ -301,6 +318,25 @@ int main(void)
 
             /* base config for the phase */
             video_mode(m == 4 || m == 6 ? 1 : m);
+
+            if (m == 5) {
+                /* second playfield: warm inverse of the dusk scene —
+                 * chunky amber bands + grid, drawn once into FB1 */
+                volatile uint32_t *pf = (volatile uint32_t *)FB1_ADDR;
+                for (uint32_t y = 0; y < LCD_H / 2; y++)
+                    for (uint32_t x = 0; x < LCD_W; x++) {
+                        uint32_t c = sky_bands[7 - ((y * 8) / (LCD_H / 2))];
+                        if ((x & 31) == 0 || (y & 31) == 0)
+                            c = 0xFF48A090;
+                        pf[y * LCD_W + x] = c;
+                    }
+                dcache_clean_fb(FB1_ADDR);
+                video_mode5_split(FB0_ADDR, FB1_ADDR);
+            }
+            if (m == 7) {
+                update_m7_shift(0);
+                video_mode7_lineshift(m7_shift, M7_BANDS, 8);
+            }
 
             if (m == 0 || m == 7) {
                 /* label must live on VI0 — overlay is off/busy */
@@ -331,11 +367,14 @@ int main(void)
 
         /* ---- per-frame content ---- */
 
-        /* Mode 7 redraws the body as a rotozoom */
+        /* Mode 7: NEON redraws the rotozoom; the hardware lineshift
+         * sways the scanout on top (bring-up: sway = LADDR mid-frame
+         * latch works; static = it doesn't) */
         if (m == 7) {
             draw_m7(FB0_ADDR, frame);
             draw_label(FB0_ADDR, phases[phase].label);
             dcache_clean_fb(FB0_ADDR);
+            update_m7_shift(frame);
         }
 
         /* overlay: orbs + label (label mirrored here so it survives
@@ -383,6 +422,8 @@ int main(void)
 
         frame++;
         video_wait_vblank();
+        if (m == 7)
+            video_mode7_line_reset(FB0_ADDR);
     }
     return 0;
 }
