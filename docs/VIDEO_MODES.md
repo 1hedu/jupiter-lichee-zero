@@ -64,6 +64,31 @@ top for subtitles/HUD. `video_mode4_off()` restores normal XRGB
 scanout. There is no scaler on V3s silicon (the VSU is fused off — see
 `scaler_probe`), so the frame displays 1:1 in a positioned window.
 
+## Open hardware questions — `examples/de2_probe`
+
+Three DE2 capabilities exist in the register map but have never been
+driven on V3s silicon (Linux ignores them, no public doc). The
+`de2_probe` example (also in the menu, under Benchmarks) answers all
+three in one flash — A/Right steps configs, UART logs every register
+write:
+
+1. **Blender colorkey** (configs 0–11): CK_CTL/CK_CFG/CK_MAX/CK_MIN at
+   BLD +0xB0/+0xB4/+0xC0/+0xE0. The probe fills a full-screen VI1 with
+   magenta + white bars over an animated VI0 gradient and sweeps 12
+   plausible CTL/CFG interpretations. *Gradient punching through the
+   magenta at config N = hardware colorkey works* — note N, and Mode 5
+   grows a dual-full-playfield variant (plus "magic pink" sprite
+   layers on an opaque channel). Solid magenta on all 12 = absent.
+2. **VI sub-windows** (config 12): every VI channel has four overlay
+   slots (0x30-stride register groups); Linux drives only slot 0. The
+   probe enables all four with staggered colored squares. *Four
+   squares = up to four hardware rects per channel.* One red square =
+   slot 0 only.
+3. **Window animation** (config 13): re-programs VI1's size + position
+   every vblank — a breathing, orbiting box. *Smooth = animate layer
+   dimensions freely* (hardware window tweens, iris wipes, zoom-boxes).
+   Tearing or hangs = size changes need vblank-latch care.
+
 ## Verification status
 
 Modes 0–3 rearrange only registers that every shipped example already

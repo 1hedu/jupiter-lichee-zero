@@ -171,6 +171,14 @@
 #define BLD_BKCOLOR         REG32(BLD + 0x88)
 #define BLD_OUT_SIZE        REG32(BLD + 0x8C)
 #define BLD_MODE(x)         REG32(BLD + 0x90 + 0x04*(x))
+/* Blender colorkey (DE2 register map per Linux sun8i_mixer.h — Linux
+ * never drives these; semantics probed by examples/de2_probe). Key i
+ * is believed to gate blending between pipe i and pipe i+1. */
+#define BLD_CK_CTL          REG32(BLD + 0xB0)
+#define BLD_CK_CFG          REG32(BLD + 0xB4)
+#define BLD_CK_MAX(x)       REG32(BLD + 0xC0 + 0x04*(x))
+#define BLD_CK_MIN(x)       REG32(BLD + 0xE0 + 0x04*(x))
+#define BLD_PREMULTIPLY     REG32(BLD + 0x84)
 
 #define PIPE_EN(n)          BIT(8 + (n))
 #define PIPE_FC(n)          BIT(n)
