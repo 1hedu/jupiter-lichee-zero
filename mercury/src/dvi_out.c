@@ -15,6 +15,7 @@
  * Swap dvi_out.c for mipi_out.c to switch to direct PIO MIPI TX.
  */
 
+#include <string.h>
 #include "pico/stdlib.h"
 #include "jupiter32x.h"
 #include "dvi.h"
@@ -56,6 +57,7 @@ void j32x_scanout_loop(void)
     dvi_start(&dvi0);
 
     while (1) {
+        j32x_swap_apply();   /* flip front/back only between frames */
         const uint8_t *fb = g_state.fb[g_state.front];
         uint16_t w = g_state.width ? g_state.width : J32X_WIDTH;
         uint16_t h = g_state.height ? g_state.height : J32X_HEIGHT;
@@ -68,15 +70,19 @@ void j32x_scanout_loop(void)
 
             if (y < y_off || y >= y_off + h) {
                 /* Letterbox region — black */
+                /* n_pix = full line width; per-channel symbol stride =
+                 * width / DVI_SYMBOLS_PER_WORD (PicoDVI app idiom) */
                 tmds_encode_data_channel_8bpp(
                     (const uint32_t *)black_line, tmdsbuf,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_BLUE_MSB, DVI_8BPP_BLUE_LSB);
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_BLUE_MSB, DVI_8BPP_BLUE_LSB);
                 tmds_encode_data_channel_8bpp(
-                    (const uint32_t *)black_line, tmdsbuf + J32X_DVI_H_ACTIVE,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_GREEN_MSB, DVI_8BPP_GREEN_LSB);
+                    (const uint32_t *)black_line,
+                    tmdsbuf + J32X_DVI_H_ACTIVE / DVI_SYMBOLS_PER_WORD,
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_GREEN_MSB, DVI_8BPP_GREEN_LSB);
                 tmds_encode_data_channel_8bpp(
-                    (const uint32_t *)black_line, tmdsbuf + 2 * J32X_DVI_H_ACTIVE,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_RED_MSB, DVI_8BPP_RED_LSB);
+                    (const uint32_t *)black_line,
+                    tmdsbuf + 2 * (J32X_DVI_H_ACTIVE / DVI_SYMBOLS_PER_WORD),
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_RED_MSB, DVI_8BPP_RED_LSB);
             } else {
                 /* Active region — build a padded scanline */
                 uint fb_y = y - y_off;
@@ -91,13 +97,15 @@ void j32x_scanout_loop(void)
 
                 tmds_encode_data_channel_8bpp(
                     (const uint32_t *)line_buf, tmdsbuf,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_BLUE_MSB, DVI_8BPP_BLUE_LSB);
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_BLUE_MSB, DVI_8BPP_BLUE_LSB);
                 tmds_encode_data_channel_8bpp(
-                    (const uint32_t *)line_buf, tmdsbuf + J32X_DVI_H_ACTIVE,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_GREEN_MSB, DVI_8BPP_GREEN_LSB);
+                    (const uint32_t *)line_buf,
+                    tmdsbuf + J32X_DVI_H_ACTIVE / DVI_SYMBOLS_PER_WORD,
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_GREEN_MSB, DVI_8BPP_GREEN_LSB);
                 tmds_encode_data_channel_8bpp(
-                    (const uint32_t *)line_buf, tmdsbuf + 2 * J32X_DVI_H_ACTIVE,
-                    J32X_DVI_H_ACTIVE / 2, DVI_8BPP_RED_MSB, DVI_8BPP_RED_LSB);
+                    (const uint32_t *)line_buf,
+                    tmdsbuf + 2 * (J32X_DVI_H_ACTIVE / DVI_SYMBOLS_PER_WORD),
+                    J32X_DVI_H_ACTIVE, DVI_8BPP_RED_MSB, DVI_8BPP_RED_LSB);
             }
 
             queue_add_blocking(&dvi0.q_tmds_valid, &tmdsbuf);

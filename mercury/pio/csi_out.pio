@@ -2,11 +2,13 @@
 ; Jupiter 32X — Parallel CSI pixel output
 ;
 ; Emulates a camera sensor's DVP (Digital Video Port) output.
-; The V3s CSI controller captures this as if it were a real camera.
+; Feeds a DVP→MIPI CSI-2 bridge (TC358748) — the V3s CSI input is
+; MIPI-only on the Lichee Pi Zero, and the parallel CSI pins on port E
+; are taken by the RGB LCD. See README "Pico → V3s bridge chip".
 ;
-; Signals (directly connect to V3s parallel CSI pins):
+; Signals (to the bridge's DVP input):
 ;   GPIO 0-7:  D[0:7]  pixel data (active during HREF)
-;   GPIO 8:    PCLK    pixel clock (active during HREF)  
+;   GPIO 8:    PCLK    pixel clock (active during HREF)
 ;   GPIO 9:    HREF    horizontal reference (high = valid pixel data)
 ;   GPIO 10:   VSYNC   vertical sync (active high, active between frames)
 ;

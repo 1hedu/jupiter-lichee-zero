@@ -60,7 +60,11 @@ void j32x_exec_displaylist(const uint8_t *buf, uint32_t len)
             uint8_t slot = buf[pos + 1];
             uint16_t size = buf[pos + 2] | (buf[pos + 3] << 8);
             pos += 4;
-            if (slot < J32X_TEX_SLOTS && pos + size <= len) {
+            /* size is attacker/glitch-controlled: without the
+             * J32X_TEX_MAX bound a 64KB claim would memcpy far past
+             * the 4KB slot into neighboring state. */
+            if (slot < J32X_TEX_SLOTS && size <= J32X_TEX_MAX &&
+                pos + size <= len) {
                 memcpy(g_state.tex[slot].data, &buf[pos], size);
                 g_state.tex[slot].valid = true;
             }
@@ -84,9 +88,11 @@ void j32x_exec_displaylist(const uint8_t *buf, uint32_t len)
             return;
 
         default:
-            /* Unknown command — skip byte and hope for the best */
-            pos++;
-            break;
+            /* Unknown command (including the reserved CMD_SPRITE /
+             * CMD_PALETTE opcodes): the stream is desynced or from a
+             * newer protocol — abort this frame rather than walking
+             * misaligned bytes into the rasterizer. */
+            return;
         }
     }
 }

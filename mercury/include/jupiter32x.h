@@ -56,11 +56,38 @@
 #define PIN_DVI_CLKP    6       /* TMDS Clock+ */
 #define PIN_DVI_CLKN    7       /* TMDS Clock- */
 
-/* Pin assignments — SPI slave (display list from V3s) */
+/* Pin assignments — DVP/parallel route (csi_out.c, MERCURY_ROUTE_DVP).
+ * Feeds a TC358748 DVP→CSI-2 bridge; data pins must start at GPIO0 for
+ * PIO `out pins, 8`. */
+#define PIN_CSI_D0      0       /* D[0:7] on GPIO 0-7 */
+#define PIN_CSI_PCLK    8       /* pixel clock (PIO side-set) */
+#define PIN_CSI_HREF    9       /* line valid (CPU GPIO) */
+#define PIN_CSI_VSYNC   10      /* frame sync (CPU GPIO) */
+/* PCLK = sysclk / (2 * clkdiv): 133MHz / (2*5) = 13.3MHz — inside the
+ * TC358748's DVP input range. Tune once the bridge is on the bench. */
+#define J32X_PIO_CLKDIV 5.0f
+
+/* Pin assignments — SPI slave (display list from V3s).
+ * RP2040 SPI1 pin groups: RX {8,12}, CSn {9,13}, SCK {10,14}, TX {11,15}.
+ * The DVI route uses group 8-11; the DVP route needs 8-10 for
+ * PCLK/HREF/VSYNC, so SPI moves to group 12-15 there. */
+#ifdef MERCURY_ROUTE_DVP
+#define PIN_SPI_RX      12      /* SPI1 RX (MOSI from V3s) */
+#define PIN_SPI_CSN     13      /* SPI1 CSn */
+#define PIN_SPI_SCK     14      /* SPI1 SCK */
+#define PIN_SPI_TX      15      /* SPI1 TX (MISO, optional) */
+#else
 #define PIN_SPI_RX      8       /* SPI1 RX (MOSI from V3s) */
 #define PIN_SPI_CSN     9       /* SPI1 CSn */
 #define PIN_SPI_SCK     10      /* SPI1 SCK */
 #define PIN_SPI_TX      11      /* SPI1 TX (MISO, optional) */
+#endif
+
+/* Vertex coordinate clamp. Keeps the rasterizer's 16.16 edge stepping
+ * far from int32 overflow ((x1-x0)<<16 must fit) and bounds the
+ * offscreen scanline walk for hostile/garbled display lists. */
+#define J32X_COORD_MIN  (-2048)
+#define J32X_COORD_MAX  2047
 
 /* ============================================================
  * R3G3B2 color format
@@ -141,6 +168,9 @@ typedef struct {
     uint8_t         fb[2][J32X_FB_SIZE];
     volatile uint8_t front;
     volatile uint8_t back;
+    /* Set by j32x_swap() (core 0), consumed at frame boundary by the
+     * scanout loop (core 1) so a swap can never tear mid-scanout. */
+    volatile uint8_t swap_pending;
     uint16_t        width;      /* current render width */
     uint16_t        height;     /* current render height */
     j32x_tex_slot_t tex[J32X_TEX_SLOTS];
@@ -164,7 +194,8 @@ void j32x_raster_tri(j32x_vertex_t v0, j32x_vertex_t v1, j32x_vertex_t v2,
                       uint8_t color);
 void j32x_raster_line(j32x_vertex_t v0, j32x_vertex_t v1, uint8_t color);
 void j32x_raster_hline(int x0, int x1, int y, uint8_t color);
-void j32x_swap(void);
+void j32x_swap(void);        /* core 0: raise + wait          */
+void j32x_swap_apply(void);  /* core 1: flip at frame boundary */
 
 /* ============================================================
  * SPI + Display List

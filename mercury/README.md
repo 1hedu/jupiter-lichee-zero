@@ -1,6 +1,6 @@
 # Mercury — Pico Polygon Coprocessor for Jupiter
 
-A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, outputting frames over parallel CSI to the Allwinner V3s. Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
+A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, streaming frames back to the Allwinner V3s through its MIPI CSI-2 camera input (via a bridge chip — see "Pico → V3s bridge chip" below). Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
 
 ## Architecture
 
@@ -11,9 +11,9 @@ V3s (Jupiter)                          Pico (Mercury)
 │  2D VDP/PPU  │   display list    │              │
 │  Audio/DMA   │                   │  Core 0:     │
 │              │                   │   Rasterizer  │
-│  CSI capture │ ◄──── parallel ── │  Core 1:     │
-│  DE2 mixer   │   CSI (8-bit)     │   PIO scanout │
-│  LCD out     │                   │              │
+│  CSI capture │ ◄─ MIPI CSI-2 ─┐  │  Core 1:     │
+│  DE2 mixer   │                │  │   scanout    │
+│  LCD out     │        [bridge]◄──│  (DVI or DVP)│
 └──────────────┘                   └──────────────┘
 
 DE2 Layer Stack:
@@ -22,32 +22,60 @@ DE2 Layer Stack:
   VI1  ← V3s 2D background tilemap
 ```
 
-The V3s sends a display list over SPI each frame (~2KB of triangle/quad commands). The Pico rasterizes flat-shaded polygons into a 320×224 R3G3B2 framebuffer, then PIO streams it as parallel CSI. The V3s CSI controller DMA-captures the frame into DRAM, where DE2 composites it with the 2D retro layers.
+The V3s sends a display list over SPI each frame (~2KB of triangle/quad commands). The Pico rasterizes flat-shaded polygons into a 320×224 R3G3B2 framebuffer and scans it out continuously on Core 1 — as DVI (default route) or as 8-bit parallel DVP (`-DMERCURY_ROUTE_DVP=ON`). A bridge chip converts either output to MIPI CSI-2; the V3s CSI controller DMA-captures the frame into DRAM, where DE2 composites it with the 2D retro layers.
 
-## Wiring
+> **Why a bridge is mandatory:** the V3s CSI controller on the Lichee Pi
+> Zero is wired for **MIPI CSI-2** (dedicated PHY pins on the 2.54mm
+> header). The parallel CSI pins live on port E, which this SDK already
+> uses for the RGB LCD — a direct Pico→PE parallel hookup is not
+> possible alongside the display.
+
+## Wiring — DVI route (default)
 
 ```
-Pico GPIO    Signal      V3s Pin (CSI0)
-─────────    ──────      ──────────────
-GP0-GP7      D[0:7]      PE4-PE11 (CSI_D0-D7)
-GP8          PCLK        PE0 (CSI_PCLK)
-GP9          HREF        PE2 (CSI_HSYNC)
-GP10         VSYNC       PE3 (CSI_VSYNC)
-GP11         SPI MOSI    PB0 (SPI0_MOSI) or any SPI master pin
-GP12         SPI SCK     PB1 (SPI0_CLK)
-GP13         SPI CSn     PB2 (SPI0_CS)
-GND          GND         GND
+Pico GPIO    Signal            Goes to
+─────────    ──────            ───────
+GP0/GP1      TMDS D2± (blue)   TC358743 HDMI input
+GP2/GP3      TMDS D1± (green)      "
+GP4/GP5      TMDS D0± (red)        "
+GP6/GP7      TMDS CLK±             "
+GP8          SPI1 RX (MOSI)    V3s SPI master MOSI
+GP9          SPI1 CSn          V3s SPI master CS
+GP10         SPI1 SCK          V3s SPI master SCK
+GP11         SPI1 TX (MISO)    optional readback
+GND          GND               common ground
 
-Power: Pico VSYS from V3s 5V, or separate USB power.
-Both boards share a common ground.
+Bridge → V3s: TC358743 CSI-2 output → Lichee Pi Zero MIPI CSI pins
+(header pins 17/19 = D0±, 21/23 = D1±, 25/27 = CLK±).
 ```
+
+## Wiring — DVP route (`-DMERCURY_ROUTE_DVP=ON`)
+
+```
+Pico GPIO    Signal            Goes to
+─────────    ──────            ───────
+GP0-GP7      D[0:7]            TC358748 DVP input
+GP8          PCLK (PIO)            "
+GP9          HREF                  "
+GP10         VSYNC                 "
+GP12         SPI1 RX (MOSI)    V3s SPI master MOSI
+GP13         SPI1 CSn          V3s SPI master CS
+GP14         SPI1 SCK          V3s SPI master SCK
+GP15         SPI1 TX (MISO)    optional readback
+GND          GND               common ground
+```
+
+Power: Pico VSYS from V3s 5V, or separate USB power. Both boards share a common ground.
 
 ## Pin Rationale
 
-- **GP0-GP7 for data**: Consecutive GPIO bank, optimal for PIO `out pins, 8`
-- **GP8 for PCLK**: Adjacent to data, used as PIO side-set or set pin
-- **GP9-GP10 for sync**: CPU-driven GPIO, timing isn't cycle-critical
-- **GP11-GP14 for SPI**: Hardware SPI1 slave on these pins
+- **GP0-GP7 for output data**: consecutive GPIO bank — required both by
+  PicoDVI's serialiser and by PIO `out pins, 8` on the DVP route
+- **GP8-GP10 (DVP) for PCLK/HREF/VSYNC**: PCLK is PIO side-set,
+  HREF/VSYNC are CPU GPIO (timing isn't cycle-critical)
+- **SPI**: RP2040 hardware SPI1 only maps to pin groups
+  RX {8,12} / CSn {9,13} / SCK {10,14} / TX {11,15}. The DVI route uses
+  group 8-11; the DVP route needs 8-10 for sync, so SPI moves to 12-15.
 
 ## Display List Protocol
 
@@ -58,15 +86,24 @@ Byte 0-1:  Payload length (uint16_t LE)
 Byte 2+:   Command stream
 
 Commands:
-  0x01 COLOR         — clear framebuffer (2 bytes: cmd, color)
+  0x00 NOP           — padding (1 byte)
+  0x01 CLEAR         — clear framebuffer (2 bytes: cmd, color)
   0x02 TRI           — flat triangle (14 bytes: cmd, color, 3× vertex)
   0x04 QUAD          — flat quad (18 bytes: cmd, color, 4× vertex)
   0x05 LINE          — line segment (10 bytes: cmd, color, 2× vertex)
-  0x11 TEXTURE       — upload texture (4+N bytes: cmd, slot, size, data)
+  0x11 TEXTURE       — upload texture (4+N bytes: cmd, slot, size u16 LE,
+                       data). slot < 8, size ≤ 4096 or the frame aborts.
+  0x20 SET_RES       — set framebuffer resolution (5 bytes: cmd, w u16, h u16)
   0xFF SCENE_END     — swap buffers and display
+
+Reserved (defined in jupiter32x.h but not yet implemented): 0x06 SPRITE,
+0x10 PALETTE. An unknown or truncated command aborts the rest of the
+frame — the parser can't know the length of a command it doesn't
+recognize, so resynchronizing would draw garbage.
 ```
 
-Each vertex is `{int16_t x, int16_t y}` — screen coordinates. The Pico doesn't do 3D projection. The V3s transforms world coordinates to screen space and sends projected 2D vertices. This keeps the Pico code simple and the display list compact.
+Each vertex is `{int16_t x, int16_t y}` — screen coordinates, clamped by
+the rasterizer to ±2048. The Pico doesn't do 3D projection. The V3s transforms world coordinates to screen space and sends projected 2D vertices. This keeps the Pico code simple and the display list compact.
 
 For 3D scenes, the V3s does:
 ```c
@@ -102,8 +139,10 @@ The cube uses painter's algorithm (back-to-front face sorting) and integer-only 
 ```bash
 export PICO_SDK_PATH=/path/to/pico-sdk
 cd mercury
+git clone https://github.com/Wren6991/PicoDVI external/PicoDVI  # DVI route only
 mkdir build && cd build
-cmake ..
+cmake ..                        # DVI route (default)
+# cmake -DMERCURY_ROUTE_DVP=ON ..   # parallel DVP route instead
 make
 ```
 
@@ -119,7 +158,7 @@ On the V3s Jupiter SDK side, add `v3s_side/mercury_csi_capture.h` to your build:
 // During init:
 csi_clocks_init();
 csi_gpio_init();
-csi_capture_init(MERCURY_CAPTURE_BUF);  // physical DRAM address
+csi_capture_init(MERCURY_CAPTURE_BUF, MERCURY_RES_GENESIS);  // phys DRAM addr, resolution
 
 // In your main loop:
 if (csi_frame_ready()) {
@@ -142,16 +181,37 @@ mercury/
 ├── include/
 │   └── jupiter32x.h            Constants, types, display list format
 ├── pio/
-│   └── csi_out.pio             PIO programs for pixel + sync output
+│   └── csi_out.pio             PIO programs for DVP pixel + sync output
 ├── src/
 │   ├── mercury_main.c             Core 0 main: SPI recv + rasterize + self-test cube
 │   ├── mercury_raster.c           Triangle/line/hline rasterizer, double-buffer swap
 │   ├── mercury_displaylist.c      Display list command parser and dispatch
-│   ├── mercury_spi.c              SPI slave receiver (hardware SPI1 + DMA)
-│   └── csi_out.c               Core 1: PIO + DMA scanout loop
+│   ├── mercury_spi.c              SPI slave receiver (hardware SPI1, CS-framed)
+│   ├── dvi_out.c               Core 1: PicoDVI scanout (default route)
+│   └── csi_out.c               Core 1: PIO + DMA parallel DVP scanout (MERCURY_ROUTE_DVP)
+├── test/
+│   ├── Makefile                Host-side tests, no pico-sdk needed
+│   └── test_mercury.c             Renders the cube via display list → PNG,
+│                                  clip-equivalence fuzz, hostile-input fuzz (ASan)
 └── v3s_side/
     └── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
 ```
+
+## Host tests
+
+The rasterizer and display list parser are plain C with no hardware
+dependencies, so they run (and get fuzzed) on a PC:
+
+```bash
+cd mercury/test
+make && ./test_mercury
+```
+
+This renders the self-test cube through the display-list path to
+`mercury_selftest.png`, checks the y-clipped rasterizer pixel-for-pixel
+against an int64 reference over 20,000 random triangles with coordinates
+up to ±32767, and feeds the parser oversized texture claims, truncated
+commands, and 20,000 garbage streams under AddressSanitizer.
 
 ## Pico → V3s bridge chip
 
@@ -178,12 +238,19 @@ This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons pe
 
 ## Status / TODO
 
-### Working
-- Pico-side rasterizer (flat tri, line, hline, clear, double-buffer)
-- PIO pixel scanout with DMA (Core 1)
-- Display list parser (CLEAR, TRI, QUAD, LINE, SCENE_END)
-- Self-test spinning cube (runs when no SPI master connected)
-- SPI slave receive (non-blocking)
+### Working (host-verified — nothing below has run on Pico hardware yet)
+- Pico-side rasterizer (flat tri, line, hline, clear, tear-free
+  double-buffer swap) — fuzzed against an int64 reference, see `test/`
+- Display list parser (NOP, CLEAR, TRI, QUAD, LINE, TEXTURE, SET_RES,
+  SCENE_END) — hostile-input fuzzed under ASan
+- Self-test spinning cube (runs when no SPI master connected) — rendered
+  on host, see `test/`
+
+### Believed working (compiles against the right APIs, needs hardware)
+- DVI scanout via PicoDVI (Core 1) — TMDS calls follow the upstream
+  8bpp app idiom, unverified on a real display
+- PIO + DMA parallel DVP scanout (Core 1, `MERCURY_ROUTE_DVP`)
+- SPI slave receive (non-blocking, CS-framed, self-resynchronizing)
 
 ### Needs Work
 - **MIPI CSI-2 PHY configuration on V3s** — `csi_capture_init()` sets up the CSI controller (buffer, size, interrupts) but does NOT configure the MIPI PHY (lane count, data rate, protocol layer). Need a Linux register dump with a real MIPI camera to get the exact PHY register sequence. Same approach used for audio codec and CedarVE.

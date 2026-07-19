@@ -109,8 +109,9 @@ static inline void csi_capture_init(uint32_t buf_addr, int res)
 
     csi[CSI_EN / 4] = 0;
     csi[CSI_CFG / 4] = CSI_CFG_INPUT_FMT(0) | CSI_CFG_OUTPUT_FMT(0);
-    csi[CSI_HSIZE / 4] = ((uint32_t)w << 16) | w;
-    csi[CSI_VSIZE / 4] = ((uint32_t)h << 16) | h;
+    /* sunxi CSI: length in high half, start offset in low half */
+    csi[CSI_HSIZE / 4] = ((uint32_t)w << 16) | 0;
+    csi[CSI_VSIZE / 4] = ((uint32_t)h << 16) | 0;
     csi[CSI_BUF_ADDR0 / 4] = buf_addr;
     csi[CSI_BUF_LEN / 4] = w;
     csi[CSI_INT_STA / 4] = 0xFFFFFFFF;
