@@ -174,22 +174,121 @@ int main(void)
     uart_puts("[main] cut to "); uart_putdec(CELEBI_FRAMES);
     uart_puts(" frames × "); uart_putdec(META_TPF); uart_puts(" tiles\n");
 
-    /* BG: grass + dirt */
+    /* BG: DMG dusk pastoral — banded sky with chunky dither, a low sun,
+     * pine treeline silhouette, and a quiet grass field for the walk
+     * path.  Tiles are ASCII art, '0' = lightest shade .. '3' = darkest. */
+    enum {
+        T_L0, T_L1, T_L2, T_L3,          /* solid shades          */
+        T_D32, T_D21, T_D10,             /* 4x4-block sky dither  */
+        T_SUN_00, T_SUN_01, T_SUN_02,    /* 3x3-tile low sun      */
+        T_SUN_10, T_SUN_11, T_SUN_12,
+        T_SUN_20, T_SUN_21, T_SUN_22,
+        T_BIRD,                          /* distant birds         */
+        T_TREE_A, T_TREE_B,              /* treeline silhouette   */
+        T_TRANS,                         /* hill -> grass steps   */
+        T_GRASS,                         /* grass tuft accent     */
+        T_FRINGE,                        /* field -> ground edge  */
+        T_GROUND, T_FLOWER, T_TALL,      /* dark foreground band  */
+    };
+    static const char bg_art[][8][9] = {
+        [T_L0]  = {"00000000","00000000","00000000","00000000",
+                   "00000000","00000000","00000000","00000000"},
+        [T_L1]  = {"11111111","11111111","11111111","11111111",
+                   "11111111","11111111","11111111","11111111"},
+        [T_L2]  = {"22222222","22222222","22222222","22222222",
+                   "22222222","22222222","22222222","22222222"},
+        [T_L3]  = {"33333333","33333333","33333333","33333333",
+                   "33333333","33333333","33333333","33333333"},
+        [T_D32] = {"33332222","33332222","33332222","33332222",
+                   "22223333","22223333","22223333","22223333"},
+        [T_D21] = {"22221111","22221111","22221111","22221111",
+                   "11112222","11112222","11112222","11112222"},
+        [T_D10] = {"11110000","11110000","11110000","11110000",
+                   "00001111","00001111","00001111","00001111"},
+        [T_SUN_00]={"11111111","11111111","11111112","11111122",
+                   "11111220","11112200","11122000","11220000"},
+        [T_SUN_01]={"11111111","11122111","22222222","20000002",
+                   "00000000","00000000","00000000","00000000"},
+        [T_SUN_02]={"11111111","11111111","21111111","22111111",
+                   "02211111","00221111","00022111","00002211"},
+        [T_SUN_10]={"11220000","11200000","11200000","12200000",
+                   "12200000","11200000","11200000","11220000"},
+        [T_SUN_11]={"00000000","00000000","00000000","00000000",
+                   "00000000","00000000","00000000","00000000"},
+        [T_SUN_12]={"00002211","00000211","00000211","00000221",
+                   "00000221","00000211","00000211","00002211"},
+        [T_SUN_20]={"11220000","11122000","11112200","11111220",
+                   "11111122","11111112","11111111","11111111"},
+        [T_SUN_21]={"00000000","00000000","00000000","00000000",
+                   "20000002","22222222","11122111","11111111"},
+        [T_SUN_22]={"00002211","00022111","00221111","02211111",
+                   "22111111","21111111","11111111","11111111"},
+        [T_BIRD] = {"11111111","13131111","11311111","11111111",
+                   "11111313","11111131","11111111","11111111"},
+        [T_TREE_A]={"00030000","00333000","00333000","03333300",
+                   "03333300","33333333","33333333","33333333"},
+        [T_TREE_B]={"00000300","00003330","00003330","30033333",
+                   "33333333","33333333","33333333","33333333"},
+        [T_TRANS]= {"33333333","33333333","33223322","22332233",
+                   "22222222","22112211","11221122","11111111"},
+        [T_GRASS]= {"11111111","11111111","11211121","12121212",
+                   "11111111","11111111","11111111","11111111"},
+        [T_FRINGE]={"11111111","11111111","21122112","22222222",
+                   "22222222","22222222","22222222","22222222"},
+        [T_GROUND]={"22222222","22232222","22222222","22222223",
+                   "22222222","23222222","22222222","22222322"},
+        [T_FLOWER]={"22222222","22200222","22000022","22000022",
+                   "22200222","22222222","22222222","22222222"},
+        [T_TALL] = {"22222222","23232322","23232322","23232322",
+                   "22222222","22222222","22222222","22222222"},
+    };
     memset(bg_chr, 0, sizeof(bg_chr));
-    for (int r=0;r<8;r++) {
-        bg_chr[1*16+r]   = (r<3) ? 0xAA : 0xFF;
-        bg_chr[1*16+r+8] = (r<3) ? 0x55 : 0x00;
-    }
-    for (int r=0;r<8;r++) { bg_chr[2*16+r]=0xFF; bg_chr[2*16+r+8]=0x00; }
+    for (unsigned t = 0; t < sizeof(bg_art)/sizeof(bg_art[0]); t++)
+        for (int r = 0; r < 8; r++) {
+            uint8_t bp0 = 0, bp1 = 0;
+            for (int c = 0; c < 8; c++) {
+                uint8_t ci = (uint8_t)(bg_art[t][r][c] - '0');
+                bp0 |= (ci & 1) << (7 - c);
+                bp1 |= ((ci >> 1) & 1) << (7 - c);
+            }
+            bg_chr[t*16 + r]     = bp0;
+            bg_chr[t*16 + r + 8] = bp1;
+        }
+
     memset(bg_map, 0, sizeof(bg_map));
-    for (int x=0; x<GB_MAP_W; x++) {
-        bg_map[15*GB_MAP_W+x] = 1;
-        for (int y=16; y<GB_MAP_H; y++) bg_map[y*GB_MAP_W+x] = 2;
+    for (int x = 0; x < GB_MAP_W; x++) {
+        bg_map[0*GB_MAP_W+x] = T_D32;             /* dark dusk zenith   */
+        bg_map[1*GB_MAP_W+x] = T_L2;
+        bg_map[2*GB_MAP_W+x] = T_D21;             /* dither step        */
+        bg_map[3*GB_MAP_W+x] = T_L1;
+        bg_map[4*GB_MAP_W+x] = T_L1;
+        bg_map[5*GB_MAP_W+x] = T_D10;             /* horizon glow       */
+        bg_map[6*GB_MAP_W+x] = (x & 1) ? T_TREE_B : T_TREE_A;
+        bg_map[7*GB_MAP_W+x] = T_L3;              /* treeline mass      */
+        bg_map[8*GB_MAP_W+x] = T_TRANS;
+        for (int y = 9; y < 15; y++)              /* calm walk field    */
+            bg_map[y*GB_MAP_W+x] =
+                (((x*7 + y*13) & 15) == 1) ? T_GRASS : T_L1;
+        bg_map[15*GB_MAP_W+x] = T_FRINGE;
+        for (int y = 16; y < GB_MAP_H; y++) {     /* dark foreground    */
+            int h = (x*5 + y*11) & 15;
+            bg_map[y*GB_MAP_W+x] = (h == 2) ? T_FLOWER
+                                 : (h == 9) ? T_TALL : T_GROUND;
+        }
     }
-    bg_palette[0] = 0xFF88CC88;
-    bg_palette[1] = 0xFF306830;
-    bg_palette[2] = 0xFF58A858;
-    bg_palette[3] = 0xFF98D898;
+    /* low sun, 3x3 tiles, resting on the treeline left of center */
+    for (int ty = 0; ty < 3; ty++)
+        for (int tx = 0; tx < 3; tx++)
+            bg_map[(3+ty)*GB_MAP_W + 4+tx] = T_SUN_00 + ty*3 + tx;
+    /* a few distant birds */
+    bg_map[3*GB_MAP_W+13] = T_BIRD;
+    bg_map[4*GB_MAP_W+10] = T_BIRD;
+
+    /* warm DMG-green ramp, lightest -> darkest */
+    bg_palette[0] = 0xFF9BBC0F;
+    bg_palette[1] = 0xFF8BAC0F;
+    bg_palette[2] = 0xFF306230;
+    bg_palette[3] = 0xFF0F380F;
 
     spr_palette[0] = 0x00000000;
     spr_palette[1] = celebi_pal[1];

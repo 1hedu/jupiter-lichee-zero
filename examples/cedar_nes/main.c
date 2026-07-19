@@ -193,35 +193,154 @@ int main(void)
     uart_puts("[main] cut to "); uart_putdec(ANIM_FRAMES);
     uart_puts(" frames × "); uart_putdec(META_TILES); uart_puts(" tiles\n");
 
+    /* BG palettes (NES master-palette indices):
+     *   pal0 sky:    navy / white stars / pale-yellow moon shade
+     *   pal1 ground: dark green / mid green / bright glints
+     *   pal2 glow:   navy / dusk purple-blue horizon
+     *   pal3 city:   purple-blue gaps / lit windows / black buildings
+     * universal backdrop 0x0F = black night zenith. */
     memset(palette_ram, 0x0D, sizeof(palette_ram));
-    palette_ram[0] = vinci_bg_color;
-    palette_ram[1] = 0x02; palette_ram[2] = 0x12; palette_ram[3] = 0x21;
-    palette_ram[5] = 0x17; palette_ram[6] = 0x27; palette_ram[7] = 0x37;
+    palette_ram[0]  = 0x0F;
+    palette_ram[1]  = 0x01; palette_ram[2]  = 0x30; palette_ram[3]  = 0x38;
+    palette_ram[5]  = 0x09; palette_ram[6]  = 0x1A; palette_ram[7]  = 0x2A;
+    palette_ram[9]  = 0x01; palette_ram[10] = 0x03; palette_ram[11] = 0x0F;
+    palette_ram[13] = 0x03; palette_ram[14] = 0x28; palette_ram[15] = 0x0F;
     palette_ram[17] = vinci_spr_palette[1];
     palette_ram[18] = vinci_spr_palette[2];
     palette_ram[19] = vinci_spr_palette[3];
 
+    /* BG tiles as ASCII art, '0'..'3' = color index in the block's
+     * attribute-selected palette ('0' is always the backdrop). */
+    enum {
+        T_VOID,                          /* backdrop only          */
+        T_NAVY, T_DBN,                   /* sky + zenith dither    */
+        T_STAR, T_WARM, T_SPARK,         /* sparse stars           */
+        T_MOON_00, T_MOON_01, T_MOON_10, T_MOON_11,
+        T_DNB, T_GLOW,                   /* horizon glow band      */
+        T_PEAK_L, T_PEAK_R,              /* tower tops in the glow */
+        T_TALL_TL, T_TALL_TR,            /* skyline silhouette:    */
+        T_MID_TL,  T_MID_TR,             /* 2-tile-wide buildings, */
+        T_LOW_TL,  T_LOW_TR,             /* three roof heights     */
+        T_BODY_L,  T_BODY_R,
+        T_FRINGE, T_GBASE, T_GRASS,      /* moonlit walk band      */
+        T_GLINT, T_GDARK,                /* foreground fade        */
+    };
+    static const char bg_art[][8][9] = {
+        [T_VOID] = {"00000000","00000000","00000000","00000000",
+                    "00000000","00000000","00000000","00000000"},
+        [T_NAVY] = {"11111111","11111111","11111111","11111111",
+                    "11111111","11111111","11111111","11111111"},
+        [T_DBN]  = {"00001111","00001111","00001111","00001111",
+                    "11110000","11110000","11110000","11110000"},
+        [T_STAR] = {"11111111","11111111","11121111","11111111",
+                    "11111111","11111111","11111111","11111111"},
+        [T_WARM] = {"11111111","11111111","11111111","11111111",
+                    "11111131","11111111","11111111","11111111"},
+        [T_SPARK]= {"11111111","11121111","11222111","11121111",
+                    "11111111","11111111","11111111","11111111"},
+        [T_MOON_00]={"11111112","11112222","11122222","11222222",
+                    "12233222","12233222","12222222","22222222"},
+        [T_MOON_01]={"21111111","22221111","22222111","22222211",
+                    "23322221","23322221","22222221","22222222"},
+        [T_MOON_10]={"22222222","12223332","12223332","12223332",
+                    "11222222","11122222","11112222","11111112"},
+        [T_MOON_11]={"22222222","22222221","22332221","22332221",
+                    "22332211","22222111","22221111","21111111"},
+        [T_DNB]  = {"11112222","11112222","11112222","11112222",
+                    "22221111","22221111","22221111","22221111"},
+        [T_GLOW] = {"22222222","22222222","22222222","22222222",
+                    "22222222","22222222","22222222","22222222"},
+        [T_PEAK_L]= {"22222222","22222222","22222222","22222222",
+                    "23333333","23333333","23333333","23333333"},
+        [T_PEAK_R]= {"22222222","22232222","22232222","22232222",
+                    "33333332","33333332","33333332","33333332"},
+        [T_TALL_TL]={"13333333","13333333","13333333","13333333",
+                    "13333333","13333333","13333333","13333333"},
+        [T_TALL_TR]={"33333331","33333331","33333331","33333331",
+                    "33333331","33333331","33333331","33333331"},
+        [T_MID_TL]= {"11111111","11111111","11111111","11111111",
+                    "13333333","13333333","13333333","13333333"},
+        [T_MID_TR]= {"11111111","11111111","11111111","11111111",
+                    "33333331","33333331","33333331","33333331"},
+        [T_LOW_TL]= {"11111111","11111111","13333333","13333333",
+                    "13333333","13333333","13333333","13333333"},
+        [T_LOW_TR]= {"11111111","11111111","33333331","33333331",
+                    "33333331","33333331","33333331","33333331"},
+        [T_BODY_L]= {"13333333","13233233","13333333","13333333",
+                    "13333333","13333333","13333333","13333333"},
+        [T_BODY_R]= {"33333331","33333331","33333331","33333331",
+                    "33233231","33333331","33333331","33333331"},
+        [T_FRINGE]= {"22112211","12211221","11111111","11111111",
+                    "11111111","11211111","11111111","11111121"},
+        [T_GBASE]= {"11111111","11111111","11111111","11111111",
+                    "11111111","11111111","11111111","11111111"},
+        [T_GRASS]= {"11111111","11211111","12121111","11111111",
+                    "11111211","11112121","11111111","11111111"},
+        [T_GLINT]= {"11111111","11111111","11113111","11111111",
+                    "12111111","11111111","11111111","11111111"},
+        [T_GDARK]= {"11110000","11110000","11110000","11110000",
+                    "00001111","00001111","00001111","00001111"},
+    };
     memset(bg_chr, 0, sizeof(bg_chr));
-    for (int r = 0; r < 8; r++) { bg_chr[1*16+r] = 0xFF; bg_chr[1*16+r+8] = 0x00; }
-    for (int r = 0; r < 8; r++) {
-        if (r < 1) { bg_chr[2*16+r]=0xFF; bg_chr[2*16+r+8]=0xFF; }
-        else if (r < 3) { bg_chr[2*16+r]=(r&1)?0xAA:0x55; bg_chr[2*16+r+8]=0xFF; }
-        else { bg_chr[2*16+r]=0xFF; bg_chr[2*16+r+8]=0x00; }
-    }
-    for (int r = 0; r < 8; r++) {
-        if (r==0||r==4) { bg_chr[3*16+r]=0x00; bg_chr[3*16+r+8]=0xFF; }
-        else if (r<4) { bg_chr[3*16+r]=0xEF; bg_chr[3*16+r+8]=0x00; }
-        else { bg_chr[3*16+r]=0xFE; bg_chr[3*16+r+8]=0x00; }
-    }
+    for (unsigned t = 0; t < sizeof(bg_art)/sizeof(bg_art[0]); t++)
+        for (int r = 0; r < 8; r++) {
+            uint8_t bp0 = 0, bp1 = 0;
+            for (int c = 0; c < 8; c++) {
+                uint8_t ci = (uint8_t)(bg_art[t][r][c] - '0');
+                bp0 |= (ci & 1) << (7 - c);
+                bp1 |= ((ci >> 1) & 1) << (7 - c);
+            }
+            bg_chr[t*16 + r]     = bp0;
+            bg_chr[t*16 + r + 8] = bp1;
+        }
 
+    /* Night scene: black zenith -> navy starfield -> purple horizon
+     * glow -> city silhouette -> moonlit grass where Vinci walks. */
     memset(nametable, 0, sizeof(nametable));
     for (int x = 0; x < NES_NT_W; x++) {
-        nametable[25*NES_NT_W+x] = 2;
-        for (int y = 26; y < NES_NT_H; y++) nametable[y*NES_NT_W+x] = 3;
+        nametable[0*NES_NT_W+x] = T_VOID;
+        nametable[1*NES_NT_W+x] = T_DBN;
+        for (int y = 2; y < 20; y++) {              /* starfield      */
+            uint8_t t = T_NAVY;
+            if (((x*13 + y*7)  & 31) == 3)  t = T_STAR;
+            if (((x*17 + y*11) & 63) == 20) t = T_WARM;
+            if (((x*11 + y*17) & 63) == 5)  t = T_SPARK;
+            nametable[y*NES_NT_W+x] = t;
+        }
+        {                                           /* city skyline   */
+            /* roofline: 16 two-tile buildings, 0=tall 1=mid 2=low */
+            static const uint8_t roof[16] =
+                { 0,2,1,0, 2,1,0,1, 2,0,1,2, 0,1,2,1 };
+            int v = roof[(x >> 1) & 15], right = x & 1;
+            nametable[20*NES_NT_W+x] = T_DNB;       /* horizon glow   */
+            nametable[21*NES_NT_W+x] =
+                (v==0) ? (right ? T_PEAK_R : T_PEAK_L) : T_GLOW;
+            nametable[22*NES_NT_W+x] =
+                (v==0) ? (right ? T_TALL_TR : T_TALL_TL)
+              : (v==1) ? (right ? T_MID_TR  : T_MID_TL)
+              :          T_NAVY;                    /* sky over low   */
+            nametable[23*NES_NT_W+x] =
+                (v==2) ? (right ? T_LOW_TR : T_LOW_TL)
+              :          (right ? T_BODY_R : T_BODY_L);
+        }
+        nametable[24*NES_NT_W+x] = T_FRINGE;        /* walk band      */
+        for (int y = 25; y < 27; y++) {
+            int h = (x*5 + y*13) & 15;
+            nametable[y*NES_NT_W+x] = (h == 2) ? T_GRASS
+                                    : (h == 9) ? T_GLINT : T_GBASE;
+        }
+        nametable[27*NES_NT_W+x] = T_GDARK;         /* fade to black  */
+        for (int y = 28; y < NES_NT_H; y++)
+            nametable[y*NES_NT_W+x] = T_VOID;
     }
-    memset(attribute, 0, sizeof(attribute));
+    /* big blocky moon, 2x2 tiles, left of center */
+    nametable[3*NES_NT_W+6] = T_MOON_00; nametable[3*NES_NT_W+7] = T_MOON_01;
+    nametable[4*NES_NT_W+6] = T_MOON_10; nametable[4*NES_NT_W+7] = T_MOON_11;
+
+    memset(attribute, 0, sizeof(attribute));        /* sky = pal0     */
     for (int ax = 0; ax < 8; ax++) {
-        attribute[6*8+ax] = NES_ATTR(0,0,1,1);
+        attribute[5*8+ax] = NES_ATTR(2,2,3,3);      /* glow, city     */
+        attribute[6*8+ax] = NES_ATTR(1,1,1,1);      /* ground         */
         attribute[7*8+ax] = NES_ATTR(1,1,1,1);
     }
 
