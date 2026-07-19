@@ -8,6 +8,7 @@
  *
  * DE2 mapping: Background → VI0 (opaque), Sprites → UI0 (alpha-keyed)
  */
+#include <stddef.h>
 #include "nes.h"
 #include "jupiter.h"
 
@@ -91,7 +92,11 @@ static void render_bg(uint32_t *fb, uint32_t pitch,
         if (bg->line_scroll_x)
             scr_x += bg->line_scroll_x[sy];
 
-        uint32_t world_y = (uint32_t)((int32_t)sy + bg->scroll_y) % (NES_NT_H * 8);
+        /* Signed modulo: 2^32 % 240 != 0, so unsigned wrap is wrong for
+         * negative scroll. Must match the opacity pass in nes_render(). */
+        int32_t wy = ((int32_t)sy + bg->scroll_y) % (NES_NT_H * 8);
+        if (wy < 0) wy += NES_NT_H * 8;
+        uint32_t world_y  = (uint32_t)wy;
         uint32_t tile_row = world_y / 8;
         uint32_t fine_y   = world_y & 7;
 
@@ -128,14 +133,39 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
                            const nes_bg_t *bg,
                            const uint8_t *sprite_chr,
                            const nes_oam_entry_t *oam, uint32_t num_sprites,
-                           /* BG opacity buffer for behind-sprite priority */
-                           const uint8_t *bg_opaque)
+                           /* BG opacity buffer for behind-sprite priority
+                            * (NULL = nothing opaque), with its clamped dims */
+                           const uint8_t *bg_opaque,
+                           uint32_t opq_w, uint32_t opq_h)
 {
     if (!oam || !sprite_chr || num_sprites == 0) return;
+    /* Sprite colors come from bg->palette_ram — without it, skip sprites */
+    if (!bg || !bg->palette_ram) return;
 
-    /* Per-scanline sprite limit tracking */
+    if (num_sprites > NES_MAX_SPRITES) num_sprites = NES_MAX_SPRITES;
+
+    /* Per-scanline sprite limit: allot the 8 slots in forward OAM order
+     * (low index = high priority), since the render loop below runs in
+     * reverse and a live counter there would keep the wrong sprites.
+     * Lines at/beyond the native height have no limit. */
     uint8_t scanline_count[NES_FULL_H];
+    uint16_t row_allowed[NES_MAX_SPRITES];  /* bit py = row may render */
     for (uint32_t i = 0; i < NES_FULL_H; i++) scanline_count[i] = 0;
+
+    for (uint32_t s = 0; s < num_sprites; s++) {
+        int spr_y = (int)oam[s].y + 1;
+        uint16_t mask = 0;
+        for (int py = 0; py < 8; py++) {
+            int screen_y = spr_y + py;
+            if (screen_y < 0 || screen_y >= (int)rh) continue;
+            if (screen_y < NES_FULL_H) {
+                if (scanline_count[screen_y] >= 8) continue;
+                scanline_count[screen_y]++;
+            }
+            mask |= (uint16_t)(1u << py);
+        }
+        row_allowed[s] = mask;
+    }
 
     /* Render sprites in reverse OAM order so lower indices have priority */
     for (int s = (int)num_sprites - 1; s >= 0; s--) {
@@ -153,11 +183,10 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
             int screen_y = spr_y + py;
             if (screen_y < 0 || screen_y >= (int)rh) continue;
 
-            /* 8 sprites per scanline limit */
-            if (scanline_count[screen_y] >= 8) continue;
+            /* 8 sprites per scanline limit (slots assigned above) */
+            if (!(row_allowed[s] & (1u << py))) continue;
 
             int tile_row = vflip ? (7 - py) : py;
-            int drew_pixel = 0;
 
             for (int px = 0; px < 8; px++) {
                 int screen_x = spr_x + px;
@@ -169,16 +198,14 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
                 if (ci == 0) continue;  /* transparent */
 
                 /* Behind-BG priority: only show through transparent BG pixels */
-                if (behind && bg_opaque && bg_opaque[screen_y * rw + screen_x])
+                if (behind && bg_opaque &&
+                    screen_y < (int)opq_h && screen_x < (int)opq_w &&
+                    bg_opaque[screen_y * opq_w + screen_x])
                     continue;
 
                 uint32_t color = resolve_spr_color(bg->palette_ram, spr_pal, ci);
                 ovl[(y0 + screen_y) * pitch + (x0 + screen_x)] = color;
-                drew_pixel = 1;
             }
-
-            if (drew_pixel)
-                scanline_count[screen_y]++;
         }
     }
 }
@@ -210,24 +237,35 @@ void nes_render(uint32_t *fb, uint32_t *ovl,
     /* Render background to VI0 */
     render_bg(fb, fb_w, x0, y0, rw, rh, bg);
 
-    /* Build BG opacity map for sprite behind-BG priority */
-    static uint8_t bg_opaque_buf[NES_NATIVE_W * NES_FULL_H];
+    /* Build BG opacity map for sprite behind-BG priority.
+     * Buffer is sized for the largest render rect (the full LCD); clamp
+     * the tracked region to LCD_W×LCD_H so a larger caller framebuffer
+     * cannot overflow it. When the BG pass doesn't run, pass NULL so
+     * sprites don't get masked by a stale previous-frame buffer. */
+    static uint8_t bg_opaque_buf[LCD_W * LCD_H];
+    uint32_t opq_w = rw < LCD_W ? rw : LCD_W;
+    uint32_t opq_h = rh < LCD_H ? rh : LCD_H;
+    const uint8_t *bg_opaque = NULL;
     if (bg && bg->enabled && bg->chr && bg->nametable) {
-        for (uint32_t sy = 0; sy < rh; sy++) {
+        bg_opaque = bg_opaque_buf;
+        for (uint32_t sy = 0; sy < opq_h; sy++) {
             int16_t scr_x = bg->scroll_x;
             if (bg->line_scroll_x)
                 scr_x += bg->line_scroll_x[sy];
-            uint32_t world_y = (uint32_t)((int32_t)sy + bg->scroll_y) % (NES_NT_H * 8);
+            /* Signed modulo — must stay identical to render_bg() */
+            int32_t wy = ((int32_t)sy + bg->scroll_y) % (NES_NT_H * 8);
+            if (wy < 0) wy += NES_NT_H * 8;
+            uint32_t world_y = (uint32_t)wy;
             uint32_t tile_row = world_y / 8;
             uint32_t fine_y = world_y & 7;
 
-            for (uint32_t sx = 0; sx < rw; sx++) {
+            for (uint32_t sx = 0; sx < opq_w; sx++) {
                 uint32_t world_x = (uint32_t)((int32_t)sx + scr_x) % (NES_NT_W * 8);
                 uint32_t tile_col = world_x / 8;
                 uint32_t fine_x = world_x & 7;
                 uint8_t tile_idx = bg->nametable[tile_row * NES_NT_W + tile_col];
                 uint8_t ci = chr_pixel(bg->chr + tile_idx * 16, fine_y, fine_x);
-                bg_opaque_buf[sy * rw + sx] = (ci != 0) ? 1 : 0;
+                bg_opaque_buf[sy * opq_w + sx] = (ci != 0) ? 1 : 0;
             }
         }
     }
@@ -235,5 +273,5 @@ void nes_render(uint32_t *fb, uint32_t *ovl,
     /* Render sprites to UI0 */
     render_sprites(ovl, fb_w, x0, y0, rw, rh,
                    bg, sprite_chr, oam, num_sprites,
-                   bg_opaque_buf);
+                   bg_opaque, opq_w, opq_h);
 }

@@ -100,19 +100,20 @@ static void tcon_init(void)
 
 static void video_diag(void)
 {
-    uart_puts("  [diag] PLL_VIDEO=0x"); uart_puthex(CCU_PLL_VIDEO_CTRL);
+    /* Note: uart_puthex prints its own "0x" prefix — labels end at '=' */
+    uart_puts("  [diag] PLL_VIDEO="); uart_puthex(CCU_PLL_VIDEO_CTRL);
     uart_puts(" locked="); uart_putdec(!!(CCU_PLL_VIDEO_CTRL & PLL_LOCK));
-    uart_puts("\n  [diag] DE_CLK=0x"); uart_puthex(CCU_DE_CLK);
-    uart_puts(" TCON_CLK=0x"); uart_puthex(CCU_TCON_CLK);
-    uart_puts("\n  [diag] MIX_GLB_CTL=0x"); uart_puthex(MIX_GLB_CTL);
-    uart_puts(" MIX_GLB_SIZE=0x"); uart_puthex(MIX_GLB_SIZE);
-    uart_puts("\n  [diag] VI0_ATTR=0x"); uart_puthex(VI_ATTR(0));
-    uart_puts(" VI0_LADDR=0x"); uart_puthex(VI_TOP_LADDR0(0));
-    uart_puts("\n  [diag] BLD_ROUTE=0x"); uart_puthex(BLD_ROUTE);
-    uart_puts(" BLD_PIPE_CTL=0x"); uart_puthex(BLD_PIPE_CTL);
-    uart_puts("\n  [diag] TCON_GCTL=0x"); uart_puthex(TCON_GCTL);
-    uart_puts(" TCON0_CTL=0x"); uart_puthex(TCON0_CTL);
-    uart_puts(" TCON0_DCLK=0x"); uart_puthex(TCON0_DCLK);
+    uart_puts("\n  [diag] DE_CLK="); uart_puthex(CCU_DE_CLK);
+    uart_puts(" TCON_CLK="); uart_puthex(CCU_TCON_CLK);
+    uart_puts("\n  [diag] MIX_GLB_CTL="); uart_puthex(MIX_GLB_CTL);
+    uart_puts(" MIX_GLB_SIZE="); uart_puthex(MIX_GLB_SIZE);
+    uart_puts("\n  [diag] VI0_ATTR="); uart_puthex(VI_ATTR(0));
+    uart_puts(" VI0_LADDR="); uart_puthex(VI_TOP_LADDR0(0));
+    uart_puts("\n  [diag] BLD_ROUTE="); uart_puthex(BLD_ROUTE);
+    uart_puts(" BLD_PIPE_CTL="); uart_puthex(BLD_PIPE_CTL);
+    uart_puts("\n  [diag] TCON_GCTL="); uart_puthex(TCON_GCTL);
+    uart_puts(" TCON0_CTL="); uart_puthex(TCON0_CTL);
+    uart_puts(" TCON0_DCLK="); uart_puthex(TCON0_DCLK);
     uart_puts("\n");
 }
 
@@ -164,9 +165,16 @@ void video_init(void)
     memset32(0x43E00000, 0, 0x200000 / 4);  /* U-Boot's FB */
     memset32(FB0_ADDR, 0, LCD_W * LCD_H);
     memset32(FB1_ADDR, 0, LCD_W * LCD_H);
+    /* UI0 overlay buffers too: de2_init enables the UI0 layer scanning
+     * OVL_ADDR with per-pixel alpha, so uninitialized DRAM there gets
+     * composited over the game layer until the app first clears it. */
+    memset32(OVL_ADDR, 0, LCD_W * LCD_H);
+    memset32(OVL1_ADDR, 0, LCD_W * LCD_H);
     dcache_clean_range(0x43E00000, 0x200000);
     dcache_clean_range(FB0_ADDR, LCD_W * LCD_H * 4);
     dcache_clean_range(FB1_ADDR, LCD_W * LCD_H * 4);
+    dcache_clean_range(OVL_ADDR, LCD_W * LCD_H * 4);
+    dcache_clean_range(OVL1_ADDR, LCD_W * LCD_H * 4);
 
     uart_puts("[video] ccu_init...\n");
     ccu_init();
@@ -225,20 +233,22 @@ void video_vi1_init(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 
 void video_wait_vblank(void)
 {
-    /* TCON0_GINT0: bit 31 = vblank IRQ enable, bit 15 = vblank pending (w1c)
-     * Write 1 to bit 15 to clear (w1c). Must not write 1 to other
-     * status bits or they get cleared too. */
-    uint32_t reg = TCON0_GINT0;
-    reg |= (1u << 31);     /* enable vblank flag */
-    reg &= ~(1u << 15);    /* clear the pending bit by NOT writing 1 to it yet */
-    TCON0_GINT0 = reg;
+    /* TCON0_GINT0: bits 31:16 = IRQ enables (bit 31 = vblank), bits 15:0 =
+     * pending flags (bit 15 = vblank). Pending flags are write-ZERO-to-
+     * clear: to ack a flag, write the register back with that flag's bit
+     * cleared (Linux sun4i_tcon does `status & ~bit`). Writing 1 to a
+     * pending bit leaves it untouched, so read-modify-write with only the
+     * target bit cleared preserves every other pending flag and all the
+     * enable bits. */
+    TCON0_GINT0 |= (1u << 31);  /* enable vblank flag (other bits written
+                                 * back unchanged — 1s don't clear) */
 
-    /* Now clear pending by writing ONLY bit 15 (preserve enables, don't touch other status) */
-    TCON0_GINT0 = (TCON0_GINT0 & 0xFFFF0000) | (1u << 15);
+    /* Ack any stale vblank: clear ONLY bit 15 (W0C) */
+    TCON0_GINT0 = TCON0_GINT0 & ~(1u << 15);
 
     /* Wait for next vblank */
     while (!(TCON0_GINT0 & (1u << 15)));
 
-    /* Clear it */
-    TCON0_GINT0 = (TCON0_GINT0 & 0xFFFF0000) | (1u << 15);
+    /* Ack it (W0C: write back with bit 15 cleared) */
+    TCON0_GINT0 = TCON0_GINT0 & ~(1u << 15);
 }

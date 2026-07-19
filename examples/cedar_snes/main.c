@@ -141,19 +141,7 @@ int main(void)
     /* ---- CedarVE encode ---- */
     cedar_argb_to_nv12(sheet, SHEET_W, SHEET_W, SHEET_H);
 
-    /* Verify NV12 data is where we think it is */
-    {
-        volatile uint8_t *y = (volatile uint8_t *)0x43100000;
-        volatile uint8_t *uv = (volatile uint8_t *)0x43200000;
-        uart_puts("[dbg] NV12@0x43100000 Y[0..7]=");
-        for (int i = 0; i < 8; i++) { uart_puthex(y[i]); uart_puts(" "); }
-        uart_puts("\n[dbg] NV12@0x43200000 UV[0..7]=");
-        for (int i = 0; i < 8; i++) { uart_puthex(uv[i]); uart_puts(" "); }
-        uart_puts("\n");
-    }
-
-    int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10,
-                                    h264_hdr_448_928, H264_HDR_448_928_LEN);
+    int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10);
     if (enc_sz > 0) {
         uart_puts("[main] encoded: "); uart_putdec(argb_sz/1024);
         uart_puts("KB → "); uart_putdec(enc_sz/1024); uart_puts("KB\n");
@@ -167,23 +155,10 @@ int main(void)
          * start_code(32) + NAL(8) + first_mb(1) + slice_type_I(3) +
          * pps_id(1) + frame_num(8) + idr_pic_id(1) + poc_lsb(8) +
          * no_output(1) + long_term(1) + qp_delta(1) + deblk(3) = 68 bits */
-        int rc = cedar_h264_decode((const uint8_t *)0x43700000, enc_sz,
-                                   SHEET_W, SHEET_H, 36, 10, 0, 0, 1);
-        /* Dump first 80 bytes of encoded bitstream */
-        {
-            dcache_invalidate_range(0x43000000, 256);
-            volatile uint8_t *bs = (volatile uint8_t *)0x43000000;
-            uart_puts("[dbg] bitstream[0..79]:\n  ");
-            for (int i = 0; i < 80; i++) {
-                uart_puthex(bs[i]); uart_puts(" ");
-                if ((i & 15) == 15) { uart_puts("\n  "); }
-            }
-            uart_puts("\n");
-        }
+        int rc = cedar_h264_decode((const uint8_t *)cedar_enc_stream_addr(),
+                                   enc_sz, SHEET_W, SHEET_H, 36, 10, 0, 0, 1);
         if (rc == 0) {
-            uint32_t dsz = ((SHEET_W+15)&~15) * ((SHEET_H+15)&~15);
-            dcache_invalidate_range(0x43100000, dsz);
-            dcache_invalidate_range(0x43200000, dsz/2);
+            /* decode invalidates its output buffers internally */
             cedar_nv12_to_argb(sheet, SHEET_W, SHEET_W, SHEET_H);
             uart_puts("[main] ROUND-TRIP COMPLETE!\n");
         } else {

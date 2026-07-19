@@ -16,14 +16,35 @@
 #define VE_BASE  0x01C0E000
 #define VE(off)  REG32(VE_BASE + (off))
 
-/* Encoder buffers — all DRAM addresses used by VE are DMA (physical) */
-#define ENC_STREAM_ADDR   0x43700000  /* must NOT overlap decoder's BUF_INPUT (0x43000000) */
-#define ENC_STREAM_SIZE   0x00100000  /* 1MB */
-#define ENC_NV12_Y        0x43100000
-#define ENC_NV12_C        0x43200000
-#define ENC_MB_INFO       0x43500000  /* 4KB */
-#define ENC_SUBPIX        0x43510000  /* 256KB */
-#define ENC_REC           0x43560000  /* 768KB */
+/* Encoder buffers — all DRAM addresses used by VE are DMA (physical).
+ *
+ * They live in the unused top halves of the VRAM display slots and in
+ * the 0x43F00000 staging megabyte — NOT in the CODE region (the old
+ * 0x431..0x437 layout collided with large-bss builds, and the old
+ * 1 MB stream buffer at 0x43700000 ran straight into the SVC/IRQ
+ * stacks at the top of CODE). Several slots are shared with the
+ * decoder's buffers (see the layout table in cedar.c); encode and
+ * decode never run concurrently, and each phase rewrites its own
+ * buffers on entry, so an encode → decode round-trip is safe.
+ * Keep cedar.c and cedar_enc.c layouts in sync!
+ *
+ * ENC_STREAM shares 0x43F00000 with the examples' NAL staging area;
+ * an app must not stage an external bitstream there while also
+ * encoding. video_init() clears 0x43E00000+2MB, so call it before
+ * any encode/decode work. */
+#define ENC_STREAM_ADDR   0x43F00000  /* 1MB, shared with NAL staging */
+#define ENC_STREAM_SIZE   0x00100000
+#define ENC_NV12_Y        0x43880000  /* 512KB slot (= decoder BUF_LUMA) */
+#define ENC_NV12_C        0x43980000  /* 256KB slot (= decoder BUF_CHROMA) */
+#define ENC_SUBPIX        0x439C0000  /* 256KB */
+#define ENC_MB_INFO       0x43B98000  /* 16KB */
+#define ENC_REC_Y         0x43A80000  /* 512KB slot (= decoder BUF_INPUT/PIC_INFO) */
+#define ENC_REC_C         0x43BA0000  /* 384KB */
+
+#define ENC_NV12_Y_SIZE   0x80000
+#define ENC_NV12_C_SIZE   0x40000
+#define ENC_REC_Y_SIZE    0x80000
+#define ENC_REC_C_SIZE    0x60000
 
 /* Register offsets (from Bootlin cedrus_regs.h) */
 #define AVC_PARA0         0xB04
@@ -74,8 +95,14 @@ void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
                         uint32_t w, uint32_t h)
 {
     uint32_t stride = (w + 15) & ~15;
+    uint32_t h16 = (h + 15) & ~15;
     uint8_t *Y  = (uint8_t *)ENC_NV12_Y;
     uint8_t *UV = (uint8_t *)ENC_NV12_C;
+
+    if (stride * h16 > ENC_NV12_Y_SIZE) {
+        uart_puts("[cedar] argb_to_nv12: frame too large\n");
+        return;
+    }
 
     for (uint32_t r = 0; r < h; r++) {
         for (uint32_t c = 0; c < w; c++) {
@@ -99,7 +126,15 @@ void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
         for (uint32_t c = w; c < stride; c++) Y[r * stride + c] = 16;
     }
 
-    uint32_t luma_sz = stride * ((h + 15) & ~15);
+    /* Pad the mb-alignment rows too — the encoder reads the full
+     * mb-aligned height, and stale DRAM there encodes as a garbage
+     * band for heights that aren't a multiple of 16. */
+    for (uint32_t r = h; r < h16; r++)
+        for (uint32_t c = 0; c < stride; c++) Y[r * stride + c] = 16;
+    for (uint32_t r = (h + 1) / 2; r < h16 / 2; r++)
+        for (uint32_t c = 0; c < stride; c++) UV[r * stride + c] = 128;
+
+    uint32_t luma_sz = stride * h16;
     dcache_clean_range(ENC_NV12_Y, luma_sz);
     dcache_clean_range(ENC_NV12_C, luma_sz / 2);
 }
@@ -107,11 +142,19 @@ void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
 /* ================================================================== */
 /* put_bits with polling (Bootlin: cedrus_enc_h264_coded_append)        */
 /* ================================================================== */
+/* Sticky error flag: set if the VLE never signals PUT_BITS_READY.
+ * Cleared at the top of cedar_h264_encode, checked after the headers
+ * are written — a stalled put_bits would otherwise silently drop or
+ * misorder header bits and return a corrupt stream as success. */
+static int put_bits_err;
+
 static void put_bits(uint32_t value, int nbits)
 {
     /* Poll for PUT_BITS_READY */
+    int ready = 0;
     for (int i = 0; i < 100000; i++)
-        if (VE(AVC_STATUS) & STS_PUT_BITS_RDY) break;
+        if (VE(AVC_STATUS) & STS_PUT_BITS_RDY) { ready = 1; break; }
+    if (!ready) put_bits_err = 1;
 
     VE(AVC_PUTBITS) = value;
     VE(AVC_TRIGGER) = ((nbits & 0x3F) << 8) | 1;  /* TYPE_PUT_BITS */
@@ -145,6 +188,10 @@ static void put_bit(int v) { put_bits(v & 1, 1); }
 
 static void put_align(void)
 {
+    /* Wait for the previous put-bits trigger to commit before reading
+     * the stream length, or we may align against a stale count. */
+    for (int i = 0; i < 100000; i++)
+        if (VE(AVC_STATUS) & STS_PUT_BITS_RDY) break;
     uint32_t len = VE(AVC_STM_LEN);
     int rem = len % 8;
     if (rem) put_bits(0, 8 - rem);
@@ -238,11 +285,8 @@ static void write_slice_header(int qp)
 /* ================================================================== */
 /* H.264 I-frame encode — complete Bootlin-derived sequence             */
 /* ================================================================== */
-int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
-                      const uint8_t *unused_hdr, uint32_t unused_hdr_len)
+int cedar_h264_encode(uint32_t w, uint32_t h, int qp)
 {
-    (void)unused_hdr; (void)unused_hdr_len;
-
     uint32_t mb_w = (w + 15) / 16;
     uint32_t mb_h = (h + 15) / 16;
     uint32_t stride = mb_w * 16;
@@ -251,15 +295,29 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
     uint32_t rec_luma_sz = ((mb_w + 1) & ~1) * 16 * (((mb_h + 1) + 3) & ~3) * 16;
     uint32_t rec_chroma_sz = ((mb_w + 1) & ~1) * 16 * ((((mb_h + 1) / 2) + 3) & ~3) * 16;
 
+    /* Reject frames whose working buffers would overflow their fixed
+     * slots — the VE would silently DMA over neighboring buffers. */
+    if (stride * mb_h * 16 > ENC_NV12_Y_SIZE ||
+        stride * mb_h * 8 > ENC_NV12_C_SIZE ||
+        rec_luma_sz > ENC_REC_Y_SIZE ||
+        rec_chroma_sz > ENC_REC_C_SIZE) {
+        uart_puts("[cedar] encode: frame too large for buffers\n");
+        return -1;
+    }
+
+    put_bits_err = 0;
+
     /* Clear buffers */
     memset((void *)ENC_STREAM_ADDR, 0xAA, 4096);  /* canary */
     memset((void *)ENC_MB_INFO, 0, 4096);
     memset((void *)ENC_SUBPIX, 0, 0x40000);
-    memset((void *)ENC_REC, 0, rec_luma_sz + rec_chroma_sz);
+    memset((void *)ENC_REC_Y, 0, rec_luma_sz);
+    memset((void *)ENC_REC_C, 0, rec_chroma_sz);
     dcache_clean_range(ENC_STREAM_ADDR, ENC_STREAM_SIZE);
     dcache_clean_range(ENC_MB_INFO, 4096);
     dcache_clean_range(ENC_SUBPIX, 0x40000);
-    dcache_clean_range(ENC_REC, rec_luma_sz + rec_chroma_sz);
+    dcache_clean_range(ENC_REC_Y, rec_luma_sz);
+    dcache_clean_range(ENC_REC_C, rec_chroma_sz);
 
     /* ---- Encoder init (from cedrus_enc.c lines 62-88) ---- */
     {
@@ -305,6 +363,12 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
 
     eptb_set(1);  /* enable EPTB for macroblock data */
 
+    if (put_bits_err) {
+        uart_puts("[cedar] encode: put_bits stalled writing headers\n");
+        VE(0x000) = 0x00130007;
+        return -1;
+    }
+
     /* Wait for sync idle */
     for (int i = 0; i < 100000; i++)
         if ((VE(0x004) & ((1u << 9) | (1u << 8))) == ((1u << 9) | (1u << 8)))
@@ -313,10 +377,10 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
     /* ---- Buffers (lines 1139-1182) ---- */
     VE(AVC_MB_INFO) = ENC_MB_INFO;
     VE(AVC_MV_BUF) = 0;
-    VE(AVC_REC_Y) = ENC_REC;
-    VE(AVC_REC_C) = ENC_REC + rec_luma_sz;
-    VE(AVC_REF0_Y) = ENC_REC;           /* I-frame: ref = rec */
-    VE(AVC_REF0_C) = ENC_REC + rec_luma_sz;
+    VE(AVC_REC_Y) = ENC_REC_Y;
+    VE(AVC_REC_C) = ENC_REC_C;
+    VE(AVC_REF0_Y) = ENC_REC_Y;         /* I-frame: ref = rec */
+    VE(AVC_REF0_C) = ENC_REC_C;
     VE(AVC_SUBPIX_NEW) = ENC_SUBPIX;
     VE(AVC_SUBPIX_LAST) = ENC_SUBPIX;
     VE(AVC_DEBLK) = 0;
@@ -363,9 +427,9 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
 
     dcache_invalidate_range(ENC_STREAM_ADDR, enc_bytes + 64);
 
-    uart_puts("[cedar] enc status=0x"); uart_puthex(status);
+    uart_puts("[cedar] enc status="); uart_puthex(status);
     uart_puts(" len="); uart_putdec(enc_bytes);
-    uart_puts("B stm_addr=0x"); uart_puthex(stm_addr_rb);
+    uart_puts("B stm_addr="); uart_puthex(stm_addr_rb);
 
     /* Check first bytes */
     volatile uint8_t *out = (volatile uint8_t *)ENC_STREAM_ADDR;
@@ -374,9 +438,20 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
     uart_puts("\n");
 
     if (status & STS_FINISH) {
+        if (enc_bytes >= ENC_STREAM_SIZE) {
+            /* STM_END stops the DMA at the buffer boundary; a length at
+             * or past it means the bitstream was truncated. */
+            uart_puts("[cedar] encode FAIL: stream buffer overflow\n");
+            return -1;
+        }
         uart_puts("[cedar] encode OK\n");
         return (int)enc_bytes;
     }
     uart_puts("[cedar] encode FAIL\n");
     return -1;
 }
+
+/* Where the encoded bitstream lands. Exposed so callers don't hardcode
+ * the address (the examples used to carry a stale 0x43700000). */
+uint32_t cedar_enc_stream_addr(void) { return ENC_STREAM_ADDR; }
+uint32_t cedar_enc_stream_size(void) { return ENC_STREAM_SIZE; }

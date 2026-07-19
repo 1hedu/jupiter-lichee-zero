@@ -1,5 +1,16 @@
 # SDK review — obvious bugs + proposed cleanup/additions
 
+> **Status update:** everything in §1 (bugs), §2 (doc rot), and §3
+> (cleanup) has been fixed in the commit that follows this doc on this
+> branch — except the SD 50 MHz clock (left as-is, verified working on
+> the reference card; comments now tell the truth and note the CMD6
+> gap) and the §3.3 `audio_dbg_*` gating (the counters are printed by
+> `sdmmc_music`, so they stay). Hardware-timing-sensitive fixes
+> (Genesis 6-button phase, cedar buffer relocation, SDMMC read-path
+> guards, vblank W0C ack) compile clean and are logically verified but
+> **need a pass on real silicon**. §4 (additions) is not implemented —
+> it remains the proposal backlog.
+
 Full-tree review of `lib/` + `include/` + `scripts/` (startup/linker), with a
 survey of all 60 examples to find code the examples have already proven out
 that belongs in the SDK. Findings marked **[verified]** were re-checked

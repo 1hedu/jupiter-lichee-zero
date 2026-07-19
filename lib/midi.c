@@ -34,8 +34,10 @@ static void rx_push(uint8_t b)
 {
     uint32_t next = (s_rx_head + 1) & (RX_RING_SIZE - 1);
     if (next == s_rx_tail) {
-        /* Ring full — drop oldest by advancing tail. */
-        s_rx_tail = (s_rx_tail + 1) & (RX_RING_SIZE - 1);
+        /* Ring full — drop the NEW byte. The tail is owned by the
+         * main-loop consumer; advancing it from the ISR races
+         * midi_recv_byte mid-read. */
+        return;
     }
     s_rx_ring[s_rx_head] = b;
     s_rx_head = next;
@@ -193,8 +195,12 @@ void midi_pump(void)
             s_running_status = b;
             s_short_remain = data_bytes_for_status(b);
             s_short_d1 = 0;
-            if (s_short_remain == 0 && s_short_cb)
-                s_short_cb(b, 0, 0);
+            if (s_short_remain == 0) {
+                if (s_short_cb) s_short_cb(b, 0, 0);
+                /* System Common (0xF1-0xF6) clears running status and
+                 * can never act as running status itself (MIDI 1.0). */
+                if (b >= 0xF1) s_running_status = 0;
+            }
             continue;
         }
 
@@ -204,8 +210,21 @@ void midi_pump(void)
             s_short_d1 = b;
             s_short_remain = 1;
         } else if (s_short_remain == 1) {
-            if (s_short_cb) s_short_cb(s_running_status, s_short_d1, b);
-            s_short_remain = data_bytes_for_status(s_running_status);
+            uint8_t st = s_running_status;
+            if (data_bytes_for_status(st) == 1) {
+                /* 1-data-byte message (0xCn/0xDn/0xF1/0xF3): the single
+                 * data byte is d1, not d2. */
+                if (s_short_cb) s_short_cb(st, b, 0);
+            } else {
+                if (s_short_cb) s_short_cb(st, s_short_d1, b);
+            }
+            if (st >= 0xF1) {
+                /* System Common consumed — clears running status. */
+                s_running_status = 0;
+                s_short_remain = 0;
+            } else {
+                s_short_remain = data_bytes_for_status(st);
+            }
             s_short_d1 = 0;
         }
     }

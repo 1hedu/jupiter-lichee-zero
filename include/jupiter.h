@@ -198,10 +198,19 @@ void audio_psg_noise_on(uint8_t vol, uint8_t rate, uint8_t periodic);
 void audio_psg_noise_off(void);
 void audio_genesis_all_off(void);
 
-/* ---- Drawing helpers (inline, no .c needed) ---- */
+/* ---- Drawing helpers (inline, no .c needed) ----
+ * Negative x/y are clamped to 0 (the rect is shrunk by the clipped
+ * amount) and non-positive w/h draw nothing, so callers can't write
+ * before the buffer or wrap rows with negative coords. There is NO
+ * right/bottom clipping — pitch alone doesn't tell us the buffer
+ * bounds — so the CALLER must ensure x+w and y+h fit their buffer. */
 static inline void draw_rect(volatile uint32_t *buf, uint32_t pitch,
                               int x, int y, int w, int h, uint32_t color)
 {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (w <= 0 || h <= 0)
+        return;
     for (int r = y; r < y + h; r++)
         for (int c = x; c < x + w; c++)
             buf[r * pitch + c] = color;
@@ -210,12 +219,21 @@ static inline void draw_rect(volatile uint32_t *buf, uint32_t pitch,
 static inline void clear_rect(volatile uint32_t *buf, uint32_t pitch,
                                int x, int y, int w, int h)
 {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (w <= 0 || h <= 0)
+        return;
     for (int r = y; r < y + h; r++)
         for (int c = x; c < x + w; c++)
             buf[r * pitch + c] = 0x00000000;
 }
 
-/* ---- cedar.c ---- */
+/* ---- cedar.c + cedar_enc.c ----
+ * Call video_init() before any encode/decode work: it clears the DRAM
+ * region the codec buffers live in. Decode output and encode input are
+ * internal fixed buffers; the encoded bitstream address comes from
+ * cedar_enc_stream_addr(). Max frame: the working buffers bound the
+ * mb-aligned luma plane to 512KB (e.g. 512x1024 or 448x928). */
 void cedar_init(void);
 int  cedar_h264_decode(const uint8_t *h264_data, uint32_t h264_size,
                        uint32_t w, uint32_t h, uint32_t hdr_bits,
@@ -223,10 +241,11 @@ int  cedar_h264_decode(const uint8_t *h264_data, uint32_t h264_size,
                        int chroma_qp_off, int disable_deblock);
 void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
                         uint32_t w, uint32_t h);
-int  cedar_h264_encode(uint32_t w, uint32_t h, int qp,
-                       const uint8_t *nal_header, uint32_t nal_header_len);
+int  cedar_h264_encode(uint32_t w, uint32_t h, int qp); /* returns bytes, <0 on error */
 void cedar_nv12_to_argb(uint32_t *dst, uint32_t dst_pitch,
                         uint32_t w, uint32_t h);
+uint32_t cedar_enc_stream_addr(void);  /* encoded bitstream location */
+uint32_t cedar_enc_stream_size(void);
 void dcache_invalidate_range(uint32_t addr, uint32_t size);
 
 /* ---- sram.c ---- */

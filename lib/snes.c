@@ -12,7 +12,7 @@
 typedef struct {
     const uint8_t *trow;    /* pointer to this row's tile pixel data */
     uint32_t pal_off;       /* palette offset for this tile */
-    uint8_t  tidx;          /* tile index (0=transparent) */
+    uint16_t tidx;          /* tile index, 10 bits (0=transparent) */
     uint8_t  flipx;
     uint8_t  pri;           /* priority bit */
     uint8_t  bpp;
@@ -440,8 +440,35 @@ void snes_render_sprites(uint32_t *ovl, uint32_t fb_w, uint32_t fb_h,
         rw = fb_w; rh = fb_h; x0 = 0; y0 = 0;
     }
 
+    if (num_sprites > SNES_MAX_SPRITES) num_sprites = SNES_MAX_SPRITES;
+
+    /* Per-scanline sprite limit: allot the 32 slots in forward order
+     * (low index = high priority), since the render loop below runs in
+     * reverse and a live counter there would keep the wrong sprites.
+     * Lines at/beyond the native height have no limit. */
     uint8_t line_count[SNES_NATIVE_H];
+    uint64_t row_allowed[SNES_MAX_SPRITES];  /* bit py = row may render (h <= 8 tiles = 64 rows) */
     for (uint32_t i = 0; i < SNES_NATIVE_H; i++) line_count[i] = 0;
+
+    for (uint32_t s = 0; s < num_sprites; s++) {
+        const snes_sprite_t *sp = &sprites[s];
+        row_allowed[s] = 0;
+        if (!sp->enabled || !sp->w || !sp->h) continue;
+
+        int32_t sph = (int32_t)sp->h * 8;
+        if (sph > 64) sph = 64;
+        uint64_t mask = 0;
+        for (int32_t py = 0; py < sph; py++) {
+            int32_t screen_y = sp->y + py;
+            if (screen_y < 0 || screen_y >= (int32_t)rh) continue;
+            if (screen_y < SNES_NATIVE_H) {
+                if (line_count[screen_y] >= SNES_SPRITES_PER_LINE) continue;
+                line_count[screen_y]++;
+            }
+            mask |= (uint64_t)1 << py;
+        }
+        row_allowed[s] = mask;
+    }
 
     /* Render in reverse order (lower index = higher priority, drawn last) */
     for (int s = (int)num_sprites - 1; s >= 0; s--) {
@@ -454,12 +481,11 @@ void snes_render_sprites(uint32_t *ovl, uint32_t fb_w, uint32_t fb_h,
         for (int32_t py = 0; py < sph; py++) {
             int32_t screen_y = sp->y + py;
             if (screen_y < 0 || screen_y >= (int32_t)rh) continue;
-            if (line_count[screen_y] >= SNES_SPRITES_PER_LINE) continue;
+            if (py < 64 && !(row_allowed[s] & ((uint64_t)1 << py))) continue;
 
             int32_t actual_y = sp->flipv ? (sph - 1 - py) : py;
             int32_t tile_y = actual_y >> 3;
             int32_t fine_y = actual_y & 7;
-            int drew = 0;
 
             for (int32_t px = 0; px < spw; px++) {
                 int32_t screen_x = sp->x + px;
@@ -477,9 +503,7 @@ void snes_render_sprites(uint32_t *ovl, uint32_t fb_w, uint32_t fb_h,
 
                 uint32_t color = sprite_pal[sp->pal * 16 + ci];
                 ovl[(y0 + screen_y) * fb_w + (x0 + screen_x)] = color;
-                drew = 1;
             }
-            if (drew) line_count[screen_y]++;
         }
     }
 }

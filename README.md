@@ -135,7 +135,7 @@ nearest-palette match for the PPU to render:
 - `cedar_gb` — Pokemon Crystal (Celebi) via GB PPU at 160×144
 - `cedar_snes` — FF6 Soldier via SNES PPU
 - `cedar_genesis` — Pulseman via Genesis VDP metasprite
-- `cedar_jpeg` — bonus: JPEG decode via CedarVE
+- `cedar_jpeg` — small H.264 I-frame decode probe on CedarVE
 
 **Audio** — `opn2_rt`, `opn2_input`, `opn2_jupiter`, `opn2_megademo`,
 `opn2_hw_*` (gb / nes / live / input / xtal — drive a real YM3438),
@@ -151,7 +151,7 @@ nearest-palette match for the PPU to render:
   Sega Genesis port.
 
 **Video** — `cedar_video` (H.264 decode), `cedar_video_av` (H.264 +
-audio sync), `cedar_decode_test` (small H.264 I-frame decode probe),
+audio sync), `cedar_jpeg` (small H.264 I-frame decode probe),
 `av_demo` (multi-system audio + visuals showcase).
 
 **Storage** — `sdmmc`, `sdmmc_music`, `fs_test`, `cpak_browser`,

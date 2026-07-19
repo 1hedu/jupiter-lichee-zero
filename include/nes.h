@@ -136,7 +136,9 @@ typedef struct {
  *   fb          VI0 framebuffer (XRGB8888, opaque — background renders here)
  *   ovl         UI0 overlay (ARGB8888, transparent where empty — sprites here)
  *   fb_w, fb_h  framebuffer dimensions (LCD_W × LCD_H)
- *   bg          background descriptor (nametable + CHR + attributes + palette)
+ *   bg          background descriptor (nametable + CHR + attributes + palette).
+ *               Sprites take their palette from bg->palette_ram, so sprite
+ *               rendering is skipped when bg (or bg->palette_ram) is NULL.
  *   sprite_chr  sprite CHR data (may differ from BG CHR; 2bpp, 4KB)
  *   oam         64-entry OAM array (NULL to skip sprites)
  *   num_sprites number of active sprites (0–64)

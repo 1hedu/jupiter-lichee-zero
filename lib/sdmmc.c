@@ -23,7 +23,7 @@
  *   8. CMD7 (SELECT_CARD with RCA)                           — R1b
  *   9. ACMD6 (SET_BUS_WIDTH = 4-bit)                         — R1
  *  10. CMD16 (SET_BLOCKLEN = 512)                            — R1
- *  11. Bump controller clock to 25 MHz
+ *  11. Bump controller clock to 50 MHz
  *
  * Read: CMD17 (READ_SINGLE_BLOCK) per block, drained via FIFO polling.
  */
@@ -381,19 +381,21 @@ static int sdmmc_app_cmd(uint8_t acmd, uint32_t arg, uint32_t resp_flags, uint32
 /* Card identification + init                                         */
 /* ------------------------------------------------------------------ */
 
-/* Parse SDHC v2 CSD (CSD_STRUCTURE == 1): C_SIZE in bits [69:48], capacity
- * = (C_SIZE + 1) * 1024 blocks. We have CSD packed RESP0..RESP3 LSW first,
- * with the 8 missing CRC bits left off the bottom (the controller drops
- * CRC). So the full 128-bit CSD is RESP3:RESP2:RESP1:RESP0 with each word
- * shifted left 8 bits relative to the spec. */
+/* Parse the CSD for card capacity. The response registers hold the
+ * 128-bit CSD at its spec bit positions: csd[0]=RESP0 = bits [31:0],
+ * csd[1]=RESP1 = bits [63:32], csd[2]=RESP2 = bits [95:64],
+ * csd[3]=RESP3 = bits [127:96]. Spec bit N is bit (N % 32) of
+ * csd[N / 32] — no shifting. (Bits [7:0] are the CRC7/end bit,
+ * which we never look at.) */
 static uint32_t sdmmc_csd_blocks(const uint32_t csd[4])
 {
-    /* CSD_STRUCTURE is bit [127:126] of the 128-bit CSD. With our shift,
-     * that lands in CSD[3] bits [31:30]. */
+    /* CSD_STRUCTURE is bits [127:126] of the 128-bit CSD, i.e.
+     * csd[3] bits [31:30]. */
     uint32_t csd_struct = (csd[3] >> 30) & 0x3;
     if (csd_struct == 0) {
-        /* CSDv1 (SDSC): READ_BL_LEN at [83:80], C_SIZE at [73:62],
-         * C_SIZE_MULT at [49:47]. After our 8-bit shift: */
+        /* CSDv1 (SDSC): READ_BL_LEN at [83:80] = csd[2][19:16],
+         * C_SIZE at [73:62] = csd[2][9:0]:csd[1][31:30],
+         * C_SIZE_MULT at [49:47] = csd[1][17:15]. */
         uint32_t read_bl_len = (csd[2] >> 16) & 0xF;
         uint32_t c_size      = ((csd[2] & 0x3FFu) << 2) | ((csd[1] >> 30) & 0x3);
         uint32_t c_size_mult = (csd[1] >> 15) & 0x7;
@@ -402,10 +404,9 @@ static uint32_t sdmmc_csd_blocks(const uint32_t csd[4])
         uint32_t block_len   = 1u << read_bl_len;
         return (uint64_t)blocknr * block_len / SDMMC_BLOCK_SIZE;
     } else {
-        /* CSDv2 (SDHC/SDXC): C_SIZE at [69:48], 22 bits.
-         * After 8-bit shift: bits [77:56] of (CSD <<8). Lives in csd[2]
-         * bits [29:8] (high 16 bits) and ... actually with CSD[3:0] being
-         * RESP3..RESP0 the spec bits land as: */
+        /* CSDv2 (SDHC/SDXC): C_SIZE at [69:48], 22 bits — high 6 bits
+         * at csd[2][5:0], low 16 bits at csd[1][31:16]. Capacity =
+         * (C_SIZE + 1) * 1024 blocks. */
         uint32_t c_size = ((csd[2] & 0x3Fu) << 16) | ((csd[1] >> 16) & 0xFFFFu);
         return (c_size + 1) * 1024u;
     }
@@ -423,6 +424,11 @@ int sdmmc_init(void)
 
     LOG("init: ungate + reset SDMMC0 in CCU");
     REG32(CCU_BUS_GATE0)     |= BUS_SDMMC0_BIT;
+    /* Pulse the bus soft-reset: assert (clear bit), brief delay, then
+     * de-assert (set bit). Just OR-ing the bit in only de-asserts and
+     * never actually resets a block that was already out of reset. */
+    REG32(CCU_BUS_SOFT_RST0) &= ~BUS_SDMMC0_BIT;
+    udelay(2);
     REG32(CCU_BUS_SOFT_RST0) |= BUS_SDMMC0_BIT;
     udelay(50);
 
@@ -453,7 +459,7 @@ int sdmmc_init(void)
     int v2_card = (rc == 0) && ((r7 & 0xFFu) == 0xAAu);
     LOG_DEC("v2 card", (uint32_t)v2_card);
 
-    /* ACMD41 loop. HCS=1 if v2; voltage window = 3.2-3.4V (0x300000). */
+    /* ACMD41 loop. HCS=1 if v2; voltage window = 2.7-3.6V (0x00FF8000). */
     uint32_t ocr = 0;
     uint32_t arg41 = (v2_card ? (1u << 30) : 0u) | 0x00FF8000u;  /* HCS + voltage */
     for (int tries = 0; tries < 1000; tries++) {
@@ -511,7 +517,10 @@ int sdmmc_init(void)
     if (rc) return -90;
 
     /* Bump module clock to 50 MHz from PLL_PERIPH (600 MHz / 12). High-
-     * speed SD allows 50 MHz; if a card is stubborn we can dial back. */
+     * speed SD allows 50 MHz; if a card is stubborn we can dial back.
+     * NOTE: default-speed spec max is 25 MHz and we never issue a CMD6
+     * high-speed switch — 50 MHz is out of spec but verified working on
+     * the reference card; drop to 25000000 if a card throws CRC errors. */
     LOG("bump clock to ~50 MHz (PLL_PERIPH)");
     sdmmc_set_module_clock(50000000);
     if (sdmmc_update_card_clock()) return -91;
@@ -527,13 +536,20 @@ int sdmmc_init(void)
 
 static int sdmmc_read_one_block(uint32_t lba, uint32_t *dst)
 {
-    /* Setup data transfer. */
+    /* Match the write paths' entry guard: like them, this function
+     * punches CMDR directly and bypasses sdmmc_send_cmd (which waits
+     * on STAR_DATA_FSM_BUSY), so gate against a prior transfer whose
+     * data FSM is still unwinding. */
+    if (wait_clear(SD_STAR, STAR_DATA_FSM_BUSY, 5000000)) return -7;
+
+    /* Setup data transfer. Reset the FIFO first, then clear RISR —
+     * same proven ordering as the write paths (see write_multi). */
     SD(SD_BKSR) = SDMMC_BLOCK_SIZE;
     SD(SD_BYCR) = SDMMC_BLOCK_SIZE;
-    SD(SD_RISR) = 0xFFFFFFFFu;
     SD(SD_GCTL) |= GCTL_FIFO_RST;
     if (wait_clear(SD_GCTL, GCTL_FIFO_RST, 50000)) return -1;
     SD(SD_GCTL) |= GCTL_FIFO_AC_MOD;
+    SD(SD_RISR) = 0xFFFFFFFFu;
 
     /* SDSC uses byte address, SDHC uses block address. */
     uint32_t arg = g_card.is_sdhc ? lba : (lba * SDMMC_BLOCK_SIZE);
@@ -582,12 +598,23 @@ static int sdmmc_read_one_block(uint32_t lba, uint32_t *dst)
 static int sdmmc_read_multi(uint32_t lba, uint32_t count, uint32_t *dst)
 {
     uint32_t total_bytes = count * SDMMC_BLOCK_SIZE;
+
+    /* Gate against leftover state from a previous transfer. Like the
+     * write paths, this function punches CMDR directly and bypasses
+     * sdmmc_send_cmd's STAR_DATA_FSM_BUSY wait, so do it ourselves. */
+    if (wait_clear(SD_STAR, STAR_DATA_FSM_BUSY, 5000000)) {
+        LOG("read multi: data FSM still busy from prior xfer");
+        return -7;
+    }
+
     SD(SD_BKSR) = SDMMC_BLOCK_SIZE;
     SD(SD_BYCR) = total_bytes;
-    SD(SD_RISR) = 0xFFFFFFFFu;
+    /* Reset the FIFO first, then clear RISR — same proven ordering as
+     * the write paths (see write_multi for why the reverse is racy). */
     SD(SD_GCTL) |= GCTL_FIFO_RST;
     if (wait_clear(SD_GCTL, GCTL_FIFO_RST, 50000)) return -1;
     SD(SD_GCTL) |= GCTL_FIFO_AC_MOD;
+    SD(SD_RISR) = 0xFFFFFFFFu;
 
     uint32_t arg = g_card.is_sdhc ? lba : (lba * SDMMC_BLOCK_SIZE);
 
@@ -642,6 +669,8 @@ int sdmmc_read_blocks(uint32_t lba, uint32_t count, void *dst)
     if (!g_card.initialised) return -1;
     if (((uintptr_t)dst) & 3u) return -2;
     if (count == 0) return 0;
+    /* Bounds check, phrased to be immune to lba+count wrap-around. */
+    if (lba >= g_card.num_blocks || count > g_card.num_blocks - lba) return -3;
     if (count == 1) {
         return sdmmc_read_one_block(lba, (uint32_t *)dst);
     }
@@ -822,6 +851,8 @@ int sdmmc_write_blocks(uint32_t lba, uint32_t count, const void *src)
     if (!g_card.initialised) return -1;
     if (((uintptr_t)src) & 3u) return -2;
     if (count == 0) return 0;
+    /* Bounds check, phrased to be immune to lba+count wrap-around. */
+    if (lba >= g_card.num_blocks || count > g_card.num_blocks - lba) return -3;
     if (count == 1) {
         return sdmmc_write_one_block(lba, (const uint32_t *)src);
     }

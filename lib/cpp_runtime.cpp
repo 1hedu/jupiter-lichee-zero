@@ -15,11 +15,25 @@
 
 extern "C" void *malloc(size_t);
 extern "C" void free(void *);
+extern "C" void uart_puts(const char *);
 
 /* ---- Heap-backed new/delete ---- */
 
-void *operator new  (size_t sz) { return malloc(sz); }
-void *operator new[](size_t sz) { return malloc(sz); }
+/* With -fno-exceptions we can't throw std::bad_alloc, and returning
+ * NULL just defers the crash to a silent null-deref somewhere in the
+ * caller. Report over UART and halt where the failure actually is. */
+static void *new_or_die(size_t sz)
+{
+    void *p = malloc(sz);
+    if (!p) {
+        uart_puts("FATAL: operator new out of memory\n");
+        while (1) { __asm__ volatile ("wfi"); }
+    }
+    return p;
+}
+
+void *operator new  (size_t sz) { return new_or_die(sz); }
+void *operator new[](size_t sz) { return new_or_die(sz); }
 
 void operator delete  (void *p) noexcept { free(p); }
 void operator delete[](void *p) noexcept { free(p); }

@@ -302,6 +302,19 @@ static int emit_hex(char *dst, int cap, int pos, unsigned long long v, int upper
     while (n--) pos = emit(dst, cap, pos, tmp[n]);
     return pos;
 }
+static int emit_pad(char *dst, int cap, int pos0, int pos, int width) {
+    /* Right-justify: shift the item emitted at [pos0,pos) up by the pad
+     * count and space-fill, honoring emit()'s cap bound. */
+    int padn = width - (pos - pos0);
+    if (padn <= 0) return pos;
+    if (dst) {
+        for (int i = pos - 1; i >= pos0; i--)
+            if (i + padn + 1 < cap) dst[i + padn] = dst[i];
+        for (int i = 0; i < padn; i++)
+            if (pos0 + i + 1 < cap) dst[pos0 + i] = ' ';
+    }
+    return pos + padn;
+}
 static int emit_double(char *dst, int cap, int pos, double d) {
     /* Simple %g-ish: integer part + up to 6 frac digits. Good enough for Lua
      * number-to-string on integer-valued doubles (the common case). */
@@ -328,14 +341,26 @@ int vsnprintf(char *buf, size_t sz, const char *fmt, va_list ap) {
     while (*fmt) {
         if (*fmt != '%') { pos = emit(buf, cap, pos, *fmt++); continue; }
         fmt++;
-        /* Skip flags/width/precision — we don't honor them, just consume. */
+        /* Flags — consumed, not honored ('-' left-justify = no pad). */
         while (*fmt && (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#' || *fmt == '0')) fmt++;
-        while (*fmt >= '0' && *fmt <= '9') fmt++;
-        if (*fmt == '.') { fmt++; while (*fmt >= '0' && *fmt <= '9') fmt++; }
+        /* Width and precision. '*' takes an int from varargs — it MUST
+         * be consumed even if unused, or every later arg shifts. Width
+         * space-pads on the left; precision is honored for %s only. */
+        int width = 0, prec = -1;
+        if (*fmt == '*') { width = va_arg(ap, int); fmt++; }
+        else while (*fmt >= '0' && *fmt <= '9') width = width * 10 + (*fmt++ - '0');
+        if (width < 0) width = 0;   /* negative width = left-justify: no pad */
+        if (*fmt == '.') {
+            fmt++;
+            if (*fmt == '*') { prec = va_arg(ap, int); fmt++; }
+            else { prec = 0; while (*fmt >= '0' && *fmt <= '9') prec = prec * 10 + (*fmt++ - '0'); }
+            if (prec < 0) prec = -1;  /* negative precision = as if omitted */
+        }
         /* Length modifiers */
         int is_long = 0, is_ll = 0;
         while (*fmt == 'l') { if (is_long) is_ll = 1; is_long = 1; fmt++; }
         if (*fmt == 'z' || *fmt == 'j' || *fmt == 't') { is_long = 1; fmt++; }
+        int pos0 = pos;
         switch (*fmt) {
             case 'd': case 'i': {
                 long long v = is_ll ? va_arg(ap, long long) : (is_long ? (long long)va_arg(ap, long) : (long long)va_arg(ap, int));
@@ -365,8 +390,10 @@ int vsnprintf(char *buf, size_t sz, const char *fmt, va_list ap) {
                  * its NUL terminator. (The earlier 4 KB cap was a
                  * defensive guard against pointers into unmapped
                  * memory; in practice every caller's string is a
-                 * std::string or a literal, both well-terminated.) */
-                while (*s) pos = emit(buf, cap, pos, *s++);
+                 * std::string or a literal, both well-terminated.)
+                 * An explicit precision (%.*s / %.4s) does cap it. */
+                for (int n = 0; *s && (prec < 0 || n < prec); n++)
+                    pos = emit(buf, cap, pos, *s++);
                 break;
             }
             case 'c': pos = emit(buf, cap, pos, (char)va_arg(ap, int)); break;
@@ -378,6 +405,7 @@ int vsnprintf(char *buf, size_t sz, const char *fmt, va_list ap) {
             case '%': pos = emit(buf, cap, pos, '%'); break;
             default: pos = emit(buf, cap, pos, '%'); pos = emit(buf, cap, pos, *fmt); break;
         }
+        if (width > 0) pos = emit_pad(buf, cap, pos0, pos, width);
         fmt++;
     }
     if (buf && cap > 0) buf[(pos < cap) ? pos : (cap - 1)] = 0;

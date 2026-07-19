@@ -43,8 +43,6 @@ typedef struct __attribute__((packed)) {
     uint8_t  reserved2[8];
 } vbin_hdr_t;
 
-#define LUMA_ADDR    0x43100000
-#define CHROMA_ADDR  0x43200000
 #define MUSIC_CHAN   3   /* same channel WC1 uses for music */
 
 extern int16_t  mix_buf[];
@@ -224,11 +222,7 @@ void main(void)
                           (int)hdr->qp,
                           0, 0, 0);
 
-        uint32_t stride = (hdr->width + 15) & ~15;
-        uint32_t mb_h   = ((hdr->height + 15) / 16) * 16;
-        dcache_invalidate_range(LUMA_ADDR,   stride * mb_h);
-        dcache_invalidate_range(CHROMA_ADDR, stride * mb_h / 2);
-
+        /* (decode invalidates its output buffers internally) */
         uint32_t *fb = (uint32_t *)FB0_ADDR;
         cedar_nv12_to_argb(fb + dst_y * LCD_W + dst_x,
                            LCD_W, hdr->width, hdr->height);

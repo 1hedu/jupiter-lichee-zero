@@ -3,7 +3,7 @@
  *
  * Card is initialised through the standard SD/SDHC spec sequence
  * (CMD0 → CMD8 → ACMD41 → CMD2 → CMD3 → CMD9 → CMD7 → ACMD6) at low
- * speed (~400 kHz), then the controller clock is bumped to 25 MHz for
+ * speed (~400 kHz), then the controller clock is bumped to 50 MHz for
  * data transfers. Reads use FIFO PIO — no DMA wired yet.
  *
  * Public API is intentionally tiny: init once, then read N 512-byte

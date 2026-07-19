@@ -42,6 +42,18 @@
 /* All control pins high (inactive) */
 #define CTRL_IDLE   (PIN_A0 | PIN_A1 | PIN_nWR | PIN_nCS | PIN_nIC)
 
+/* PG pins owned by this driver (PG0-PG4). Other PG bits belong to other
+ * users of port G, so all PG_DAT writes must read-modify-write within
+ * this mask (mirrors the PB data-bus handling below). */
+#define PG_PIN_MASK (PIN_A0 | PIN_A1 | PIN_nWR | PIN_nCS | PIN_nIC)
+
+static inline void pg_ctrl_write(uint32_t ctrl)
+{
+    uint32_t pg = PG_DAT;
+    pg = (pg & ~(uint32_t)PG_PIN_MASK) | (ctrl & PG_PIN_MASK);
+    PG_DAT = pg;
+}
+
 /* Nanosecond-ish delay via loop. At 1.2 GHz, ~1 iteration ≈ 3-4 ns.
  * 100 iterations ≈ 300-400 ns. Conservative for write pulse timing. */
 static inline void ndelay(uint32_t iters)
@@ -69,27 +81,27 @@ static void ym3438_bus_write(uint8_t port, uint8_t data)
     if (port & 1) ctrl |= PIN_A0;
     if (port & 2) ctrl |= PIN_A1;
     /* /CS = low (not in ctrl) */
-    PG_DAT = ctrl;
+    pg_ctrl_write(ctrl);
 
     /* Setup time: data and address stable before /WR falls */
     ndelay(50);
 
     /* Assert /WR low */
     ctrl &= ~PIN_nWR;
-    PG_DAT = ctrl;
+    pg_ctrl_write(ctrl);
 
     /* /WR low pulse: min 200ns */
     ndelay(100);
 
     /* Deassert /WR high */
     ctrl |= PIN_nWR;
-    PG_DAT = ctrl;
+    pg_ctrl_write(ctrl);
 
     /* Hold time */
     ndelay(50);
 
     /* Deassert /CS (all control idle) */
-    PG_DAT = CTRL_IDLE;
+    pg_ctrl_write(CTRL_IDLE);
 }
 
 /* ---- Clock source selection ---- */
@@ -107,6 +119,11 @@ static uint8_t ym_clock_source = YM_CLK_CCU_MCLK;
 
 /* Cached F-Number high byte per channel for recombining after scale */
 static uint8_t fnum_hi_cache[6];
+
+/* Same, for the CH3 special mode operator slots ($A8-$AA/$AC-$AE,
+ * port 0 only) — separate so they don't collide with the normal
+ * per-channel caches above. Indexed by (addr & 3). */
+static uint8_t fnum_hi_cache_ch3[3];
 
 /* PE registers for MCLK output */
 #define PE_CFG0_REG  REG32(PIO_BASE + 0x90)
@@ -157,7 +174,7 @@ void ym3438_hw_init(void)
     PG_CFG0 = pg_cfg;
 
     /* All control lines idle (high) */
-    PG_DAT = CTRL_IDLE;
+    pg_ctrl_write(CTRL_IDLE);
     PB_DAT = PB_DAT & ~0xFF;  /* data bus = 0 */
 
     /* Start clock */
@@ -174,13 +191,14 @@ void ym3438_hw_init(void)
     /* Reset the YM3438: /IC low for >24 clock cycles (~3µs at 8 MHz) */
     uart_puts("[ym3438] resetting chip...\n");
     uint32_t ctrl = CTRL_IDLE & ~PIN_nIC;  /* /IC low */
-    PG_DAT = ctrl;
+    pg_ctrl_write(ctrl);
     ndelay(2000);  /* ~6-8µs — well over the 24-cycle minimum */
-    PG_DAT = CTRL_IDLE;  /* /IC high */
+    pg_ctrl_write(CTRL_IDLE);  /* /IC high */
     ndelay(5000);  /* Wait for internal reset to complete */
 
-    /* Clear F-Number cache */
+    /* Clear F-Number caches */
     for (int i = 0; i < 6; i++) fnum_hi_cache[i] = 0;
+    for (int i = 0; i < 3; i++) fnum_hi_cache_ch3[i] = 0;
 
     uart_puts("[ym3438] ready\n");
 }
@@ -230,6 +248,9 @@ void ym3438_hw_busy_wait(void)
  * F-Number is split across two registers per channel:
  *   $A0-$A2 (port 0) / $A0-$A2 (port 1): low 8 bits
  *   $A4-$A6 (port 0) / $A4-$A6 (port 1): high 3 bits [2:0] + block [5:3]
+ * CH3 special mode adds per-operator slots on port 0 with the same
+ * low/high split at a +8 offset: $A8-$AA (low) / $AC-$AE (block+high),
+ * paired $AC↔$A8, $AD↔$A9, $AE↔$AA.
  *
  * The high byte ($A4-$A6) must be written FIRST (latches both).
  * We cache the high byte, and when the low byte is written, we
@@ -270,6 +291,35 @@ static void ym3438_scaled_write(uint8_t port, uint8_t addr, uint8_t data)
             ym3438_hw_write(addr + 4, new_hi);  /* $A4-$A6 */
             ndelay(600);
             ym3438_hw_write(addr, new_lo);       /* $A0-$A2 */
+        } else {
+            ym3438_hw_write_port1(addr + 4, new_hi);
+            ndelay(600);
+            ym3438_hw_write_port1(addr, new_lo);
+        }
+    } else if (scale_8mhz && addr >= 0xAC && addr <= 0xAE) {
+        /* CH3 special mode high byte — cache, write as-is (mirrors $A4-$A6) */
+        fnum_hi_cache_ch3[addr & 3] = data;
+        if (port == 0)
+            ym3438_hw_write(addr, data);
+        else
+            ym3438_hw_write_port1(addr, data);
+    } else if (scale_8mhz && addr >= 0xA8 && addr <= 0xAA) {
+        /* CH3 special mode low byte — combine, scale, write both
+         * (pairing $AC↔$A8, $AD↔$A9, $AE↔$AA) */
+        uint8_t hi = fnum_hi_cache_ch3[addr & 3];
+        uint32_t fnum = ((uint32_t)(hi & 0x07) << 8) | data;
+        uint32_t block = (hi >> 3) & 0x07;
+
+        fnum = (fnum * FNUM_SCALE_8MHZ) >> 16;
+        if (fnum > 0x7FF) fnum = 0x7FF;
+
+        uint8_t new_hi = (block << 3) | ((fnum >> 8) & 0x07) | (hi & 0xC0);
+        uint8_t new_lo = fnum & 0xFF;
+
+        if (port == 0) {
+            ym3438_hw_write(addr + 4, new_hi);  /* $AC-$AE */
+            ndelay(600);
+            ym3438_hw_write(addr, new_lo);       /* $A8-$AA */
         } else {
             ym3438_hw_write_port1(addr + 4, new_hi);
             ndelay(600);

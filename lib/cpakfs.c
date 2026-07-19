@@ -451,20 +451,34 @@ int cpakfs_create_note(const char *game_code,
     put_be16(idx_table + alloc[pages - 1] * 2, INODE_END);
     idx_table[1] = idx_checksum(idx_table);
 
-    /* Fill the Note Table entry */
+    /* Fill the Note Table entry. Each source string may be shorter than
+     * its field: once the NUL is seen we must stop indexing the string
+     * (reading past the terminator is out of bounds) and just pad. */
     uint8_t *e = note_table + slot * 32;
     for (int i = 0; i < 32; i++) e[i] = 0;
-    for (int i = 0; i < 4; i++)
-        e[i]     = (game_code && game_code[i]) ? game_code[i] : ' ';
-    for (int i = 0; i < 2; i++)
-        e[4 + i] = (publisher && publisher[i]) ? publisher[i] : ' ';
+    int ended = !game_code;
+    for (int i = 0; i < 4; i++) {
+        if (!ended && game_code[i] == 0) ended = 1;
+        e[i] = ended ? ' ' : (uint8_t)game_code[i];
+    }
+    ended = !publisher;
+    for (int i = 0; i < 2; i++) {
+        if (!ended && publisher[i] == 0) ended = 1;
+        e[4 + i] = ended ? ' ' : (uint8_t)publisher[i];
+    }
     put_be16(e + 6, alloc[0]);
     e[8] = 0x00;
     e[9] = 0x02;   /* status flag: used */
-    for (int i = 0; i < 4; i++)
-        e[0x0C + i] = (ext && ext[i]) ? cpakfs_encode_char(ext[i]) : 0;
-    for (int i = 0; i < 16; i++)
-        e[0x10 + i] = (name && name[i]) ? cpakfs_encode_char(name[i]) : 0;
+    ended = !ext;
+    for (int i = 0; i < 4; i++) {
+        if (!ended && ext[i] == 0) ended = 1;
+        e[0x0C + i] = ended ? 0 : cpakfs_encode_char(ext[i]);
+    }
+    ended = !name;
+    for (int i = 0; i < 16; i++) {
+        if (!ended && name[i] == 0) ended = 1;
+        e[0x10 + i] = ended ? 0 : cpakfs_encode_char(name[i]);
+    }
 
     /* Commit metadata (Index Table primary + backup, Note Table) */
     if (write_page(PAGE_INDEX_PRI, idx_table)             < 0) return -3;

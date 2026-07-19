@@ -48,8 +48,6 @@ typedef struct __attribute__((packed)) {
 } vbin_hdr_t;
 
 #define HDR_BITS_OVERRIDE  32
-#define LUMA_ADDR    0x43100000
-#define CHROMA_ADDR  0x43200000
 
 /* ============================================================
  * Tiny 5x7 column-encoded font for the status overlay
@@ -340,10 +338,7 @@ void main(void)
                 }
             }
 
-            uint32_t stride = (hdr->width + 15) & ~15;
-            uint32_t mb_h   = ((hdr->height + 15) / 16) * 16;
-            dcache_invalidate_range(LUMA_ADDR,   stride * mb_h);
-            dcache_invalidate_range(CHROMA_ADDR, stride * mb_h / 2);
+            /* (decode invalidates its output buffers internally) */
 
             /* Single-buffer: write directly to FB0 each frame. Double-
              * buffering produced "frame/black" alternation on this path

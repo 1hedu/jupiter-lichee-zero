@@ -92,6 +92,12 @@ void hstimer_set_ticks(int timer, uint32_t ticks, int oneshot, void (*callback)(
     /* Stop timer */
     HSTMR(TMR_CTRL(timer)) = 0;
 
+    /* Ack any stale latched expiry (w1c) BEFORE re-enabling, or a leftover
+     * pending bit from a previous run fires the new callback immediately
+     * once IRQ_EN is unmasked below. Timer is stopped here, so no genuine
+     * new expiry can be lost by this ack. */
+    HSTMR(IRQ_STAS) = (1u << timer);
+
     /* Store callback */
     hstimer_cb[timer] = callback;
 
@@ -124,6 +130,9 @@ void hstimer_stop(int timer)
     if (timer < 0 || timer > 1) return;
     HSTMR(TMR_CTRL(timer)) = 0;
     HSTMR(IRQ_EN) = HSTMR(IRQ_EN) & ~(1u << timer);
+    /* Ack any latched expiry (w1c) after masking, so a stale pending bit
+     * can't fire immediately on the next re-arm */
+    HSTMR(IRQ_STAS) = (1u << timer);
     hstimer_cb[timer] = NULL;
 }
 

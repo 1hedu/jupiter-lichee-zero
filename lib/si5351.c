@@ -160,7 +160,7 @@ static const uint8_t si5351_regs[][2] = {
     {  48, 0x00 },   /* P2[15:8]  = 0                         */
     {  49, 0x00 },   /* P2[7:0]   = 0      (P2=0)             */
 
-    /* CLK0: powered up, integer mode, PLL A, 8mA drive */
+    /* CLK0: powered up, integer mode, PLL A, 4mA drive (IDRV=01) */
     {  16, 0x4D },   /* 0b01001101                             */
 
     /* PLL soft reset */
@@ -184,9 +184,7 @@ void si5351_init(void)
     cfg0 |=  (0x2 << 24);  /* func 2 = TWI0_SCK */
     PB_CFG0 = cfg0;
 
-    uint32_t cfg1 = PB_CFG1;
-    cfg1 &= ~(0x7 << 28);  /* PB7 — wait, PB7 is in CFG0 bits 31:28 */
-    /* Actually PB7 is bits [31:28] of PB_CFG0 (pins 0-7 in CFG0) */
+    /* PB7 is bits [31:28] of PB_CFG0 (pins 0-7 in CFG0) */
     cfg0 = PB_CFG0;
     cfg0 &= ~(0x7U << 28); /* PB7 */
     cfg0 |=  (0x2U << 28); /* func 2 = TWI0_SDA */

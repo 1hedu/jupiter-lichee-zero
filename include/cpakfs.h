@@ -2,14 +2,15 @@
  * Jupiter SDK — Controller Pak note filesystem
  *
  * Implements Nintendo's official 32 KB note filesystem so saves are
- * interoperable with real N64 games. Layout:
+ * interoperable with real N64 games. The FS is organised in 256-byte
+ * pages (128 pages total):
  *
- *   Block 0      — ID area (header, with backups at 0x20/0x40/0x60/0x80
- *                  inside the ID block — Nintendo stores 4 redundant copies)
- *   Blocks 1-4   — IndexTable (FAT-like). Block 1 is primary; blocks 3-4
- *                  are the mirror. Block 2 is reserved.
- *   Blocks 5-7   — NoteTable: 16 entries × 32 bytes = 512 bytes total
- *   Blocks 8-127 — File data (123 blocks usable, ~3.94 KB)
+ *   Page 0       — ID sector (4 redundant 32-byte ID block copies at
+ *                  offsets 0x20/0x60/0x80/0xC0 within the page)
+ *   Page 1       — IndexTable primary (FAT-like page chain)
+ *   Page 2       — IndexTable backup
+ *   Pages 3-4    — NoteTable: 16 entries × 32 bytes = 512 bytes total
+ *   Pages 5-127  — File data (123 pages usable, 31488 bytes ≈ 31.5 KB)
  *
  * A "note" is a save file. Each note is identified by:
  *   - game_code (4 ASCII chars, e.g. "NSME" for SM64 USA)
@@ -17,7 +18,7 @@
  *   - filename  (16 chars, N64-encoded — see cpakfs_decode_name)
  *   - extension (4 chars)
  *
- * Notes are at most 16 in number; total data blocks across all notes
+ * Notes are at most 16 in number; total data pages across all notes
  * cannot exceed 123.
  *
  * All FS functions assume cpak_probe() returned CPAK_CONTROLLER.
@@ -28,6 +29,9 @@
 #include <stdint.h>
 
 #define CPAKFS_MAX_NOTES        16
+/* Despite the name, this is the number of 256-byte data PAGES (5..127),
+ * not 32-byte cpak blocks. In 32-byte blocks the data area is 123 * 8 =
+ * 984 blocks. Name kept for API compatibility. */
 #define CPAKFS_DATA_BLOCKS      123
 #define CPAKFS_NAME_LEN         16
 #define CPAKFS_EXT_LEN          4
@@ -59,7 +63,8 @@ int cpakfs_note_count(void);
 /* Get info on the i-th valid note (0..count-1). Returns 0 on success. */
 int cpakfs_get_note(int i, cpakfs_note_t *out);
 
-/* Free space, in 32-byte blocks (0..123). */
+/* Free space, in 32-byte blocks (0..984, always a multiple of 8 since
+ * allocation is page-granular). */
 int cpakfs_free_blocks(void);
 
 /* Read a note's full data into buf. Caller must size buf to

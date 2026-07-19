@@ -165,7 +165,14 @@ input_state_t input_poll_genesis(void)
     input_state_t st = {0};
     uint32_t d;
 
-    /* Cycle 1: SELECT HIGH */
+    /* The pad's internal counter advances on SELECT (TH) falling edges.
+     * On the THIRD low phase a 6-button pad drives D0-D3 all low (the
+     * detection signature); on the following high phase it returns the
+     * extra buttons (D0=Z D1=Y D2=X D3=Mode). A 3-button pad just
+     * repeats Start/A on the extra low phases, so the signature test
+     * fails and its reads are unchanged. */
+
+    /* Cycle 1: SELECT HIGH — dirs, B, C */
     pe_set(GEN_SELECT);
     delay_us(6);
     d = pf_read_mask();
@@ -176,18 +183,26 @@ input_state_t input_poll_genesis(void)
     if (!(d & 0x10)) st.buttons |= BTN_B;
     if (!(d & 0x20)) st.buttons |= BTN_C;
 
-    /* Cycle 2: SELECT LOW */
+    /* Cycle 2: SELECT LOW (1st falling edge) — A, Start */
     pe_clr(GEN_SELECT);
     delay_us(6);
     d = pf_read_mask();
     if (!(d & 0x10)) st.buttons |= BTN_A;
     if (!(d & 0x20)) st.buttons |= BTN_START;
 
-    /* Cycle 3: SELECT HIGH */
+    /* Cycle 3: SELECT HIGH (repeat) */
     pe_set(GEN_SELECT);
     delay_us(6);
 
-    /* Cycle 4: SELECT LOW — detect 6-button */
+    /* Cycle 4: SELECT LOW (2nd falling edge, repeat) */
+    pe_clr(GEN_SELECT);
+    delay_us(6);
+
+    /* Cycle 5: SELECT HIGH (repeat) */
+    pe_set(GEN_SELECT);
+    delay_us(6);
+
+    /* Cycle 6: SELECT LOW (3rd falling edge) — detect 6-button */
     pe_clr(GEN_SELECT);
     delay_us(6);
     d = pf_read_mask();
@@ -196,7 +211,7 @@ input_state_t input_poll_genesis(void)
     if (is_6btn) {
         st.six_btn = 1;
 
-        /* Cycle 5: SELECT HIGH → extra buttons */
+        /* Cycle 7: SELECT HIGH → extra buttons */
         pe_set(GEN_SELECT);
         delay_us(6);
         d = pf_read_mask();
@@ -205,12 +220,13 @@ input_state_t input_poll_genesis(void)
         if (!(d & 0x04)) st.buttons |= BTN_L;     /* X → L */
         if (!(d & 0x08)) st.buttons |= BTN_MODE;
 
-        /* Cycle 6: SELECT LOW (cleanup) */
+        /* Cycle 8: SELECT LOW (cleanup) */
         pe_clr(GEN_SELECT);
         delay_us(6);
     }
 
-    /* Leave SELECT HIGH (idle) */
+    /* Leave SELECT HIGH (idle) — the pad's counter resets while TH sits
+     * high between polls, so every poll starts from a known phase. */
     pe_set(GEN_SELECT);
 
     st.connected = 1;
@@ -226,6 +242,11 @@ input_state_t input_poll_genesis(void)
 
 input_state_t input_poll_n64(void)
 {
+    /* Last good read — returned on timeout so a transient failed read
+     * doesn't zero the buttons and fire spurious release/press edges. */
+    static uint32_t last_buttons;
+    static int8_t last_stick_x, last_stick_y;
+
     input_state_t st = {0};
 
     /* Critical section: bit-bang timing is jitter-sensitive; if any IRQ
@@ -250,6 +271,10 @@ input_state_t input_poll_n64(void)
     n64_joybus_unlock(saved);
 
     if (!got_all) {
+        /* Timeout: keep the previous frame's state (no-op on edges) */
+        st.buttons = last_buttons;
+        st.stick_x = last_stick_x;
+        st.stick_y = last_stick_y;
         st.connected = 0;
         return st;
     }
@@ -273,6 +298,10 @@ input_state_t input_poll_n64(void)
 
     st.stick_x = (int8_t)data[2];
     st.stick_y = (int8_t)data[3];
+
+    last_buttons = st.buttons;
+    last_stick_x = st.stick_x;
+    last_stick_y = st.stick_y;
 
     return st;
 }

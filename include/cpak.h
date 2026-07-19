@@ -6,10 +6,13 @@
  * polling — but shares the PE20 line, so don't run a poll and a pak read
  * concurrently from interrupts.
  *
- * Block size is fixed at 32 bytes. There are 128 blocks (0..127),
- * giving 4096 bytes of total addressable space — but the on-card memory
- * is 32 KB; addresses 0x0000..0x7FFF are valid in 32-byte units. There
- * are 1024 blocks total. Block index in this API is the 0..1023 range.
+ * Block size is fixed at 32 bytes. The pak's storage is 32 KB =
+ * 1024 blocks (byte addresses 0x0000..0x7FFF); CPAK_NUM_BLOCKS and the
+ * byte-oriented cpak_read()/cpak_write() wrappers cover that 0..1023
+ * range. The raw block ops additionally accept blocks 1024..2047 (byte
+ * addresses 0x8000..0xFFFF), which map to probe / pak-type registers
+ * rather than storage (block 0x400 = address 0x8000 is the standard
+ * probe address).
  *
  * Detection: cpak_probe() distinguishes between
  *   - no controller (returns -1)

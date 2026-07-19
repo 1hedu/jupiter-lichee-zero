@@ -35,8 +35,12 @@ _start:
     .global _undef_handler
     .type _undef_handler, %function
 _undef_handler:
-    /* Save r0-r3, ip, lr_und to the stack (we clobber them for the log). */
-    stmfd   sp!, {r0-r4, lr}
+    /* Save every register the C calls below may clobber — r0-r3 and
+     * r12(ip) per AAPCS — plus our r4 scratch and lr_und. We RESUME the
+     * interrupted code via `movs pc, lr`, so a live r12 must survive.
+     * r5 is pushed only as padding: 8 regs = 32 bytes keeps SP 8-byte
+     * aligned at the `bl`s (AAPCS requirement at public interfaces). */
+    stmfd   sp!, {r0-r5, r12, lr}
     sub     r4, lr, #4          /* r4 = faulting PC (ARM mode default) */
     ldr     r0, =_undef_msg
     bl      uart_puts
@@ -44,7 +48,7 @@ _undef_handler:
     bl      uart_puthex
     ldr     r0, =_undef_nl
     bl      uart_puts
-    ldmfd   sp!, {r0-r4, lr}
+    ldmfd   sp!, {r0-r5, r12, lr}
     movs    pc, lr              /* Return from exception, skip past bad insn */
 
     .section .rodata
@@ -159,7 +163,10 @@ _reset:
      * jumps to _dabort_handler in ABT mode with sp=0/garbage, the first
      * call to uart_puts pushes through the bad SP, which itself faults
      * silently and re-enters ABT — endless silent recursion that looks
-     * exactly like a hang. Reserve 4KB above the IRQ stack for each. */
+     * exactly like a hang. Carve below __irq_stack_top: the IRQ stack
+     * gets 8KB (down to __irq_stack_top-8K where the ABT stack tops),
+     * ABT gets 4KB (down to -12K where the UND stack tops), and UND
+     * grows downward from there. */
     cps     #0x17                       /* ABT mode */
     ldr     sp, =__irq_stack_top
     sub     sp, sp, #(8 * 1024)         /* below IRQ stack */
@@ -221,7 +228,14 @@ _hang:
 _irq_handler:
     sub     lr, lr, #4              /* Adjust return address */
     srsdb   sp!, #0x12              /* Save LR_irq + SPSR_irq to IRQ stack */
-    push    {r0-r3, r12}           /* Save caller-saved regs */
+    /* lr is included purely as padding: srsdb already saved the return
+     * state, and lr_irq is dead until rfefd. It makes the frame at the
+     * `bl irq_handler` a multiple of 8 for AAPCS SP alignment:
+     *   srsdb 8 + push{r0-r3,r12,lr} 24 + vpush d0-d15 128
+     *   + vpush d16-d31 128 + push{r0}(fpscr) 4 + push{r1}(IAR) 4
+     *   = 296 bytes ≡ 0 (mod 8).
+     * Without lr it was 292 → SP ≡ 4 (mod 8) at the C call. */
+    push    {r0-r3, r12, lr}       /* Save caller-saved regs (+lr pad) */
     /* Save full caller-saved NEON/VFP context. AAPCS says d0-d7 and d16-d31
      * are caller-saved. On ARMv7-A w/ 32-reg VFP+NEON enabled (our CPACR),
      * compiler-emitted NEON in ISR path (memcpy auto-vec, math_neon calls)
@@ -256,5 +270,5 @@ _irq_handler:
     vmsr    fpscr, r0
     vpop    {d16-d31}
     vpop    {d0-d15}
-    pop     {r0-r3, r12}
+    pop     {r0-r3, r12, lr}       /* Mirrors push above (incl. lr pad) */
     rfefd   sp!                     /* Restore CPSR + PC from stack */

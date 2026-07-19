@@ -253,22 +253,8 @@ int main(void)
     uint32_t t1 = pmu_cycles();
     uart_puts("[main] converted in "); uart_putdec((t1-t0)/1200); uart_puts("us\n");
 
-    /* Debug: read NV12 values at the same pixel */
-    {
-        uint32_t stride = (SHEET_W + 15) & ~15;
-        uint8_t *Y  = (uint8_t *)0x43300000;  /* BUF_ENC_LUMA */
-        uint8_t *UV = (uint8_t *)0x43400000;  /* BUF_ENC_CHROMA */
-        uint8_t yv = Y[DBG_Y * stride + DBG_X];
-        uint8_t uv0 = UV[(DBG_Y/2) * stride + (DBG_X & ~1)];
-        uint8_t uv1 = UV[(DBG_Y/2) * stride + (DBG_X | 1)];
-        uart_puts("[dbg] NV12 enc input: Y="); uart_putdec(yv);
-        uart_puts(" [0]="); uart_putdec(uv0);
-        uart_puts(" [1]="); uart_putdec(uv1);
-        uart_puts("  (red→Y~80 U~90 V~240)\n");
-    }
-
     /* ---- Step 3: H.264 ENCODE on CedarVE (AVC engine +0xB00) ---- */
-    int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10, NULL, 0);
+    int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10);
     if (enc_sz < 0) {
         uart_puts("[main] ENCODE FAILED — falling back to raw ARGB\n");
         /* Fallback: use the raw ARGB directly, skip decode */
@@ -282,12 +268,10 @@ int main(void)
         /* NOTE: The encoder produces raw macroblock data. Our manually
          * written SPS/PPS headers may not be correct yet. Try decode,
          * fall back to raw ARGB if output is bad. */
-        int rc = cedar_h264_decode((const uint8_t *)0x43700000, enc_sz,
-                                   SHEET_W, SHEET_H, 36, 10, 0, 0, 1);
+        int rc = cedar_h264_decode((const uint8_t *)cedar_enc_stream_addr(),
+                                   enc_sz, SHEET_W, SHEET_H, 36, 10, 0, 0, 1);
         if (rc == 0) {
-            uint32_t dsz = ((SHEET_W+15)&~15) * ((SHEET_H+15)&~15);
-            dcache_invalidate_range(0x43100000, dsz);
-            dcache_invalidate_range(0x43200000, dsz/2);
+            /* decode invalidates its output buffers internally */
             cedar_nv12_to_argb(sheet, SHEET_W, SHEET_W, SHEET_H);
             uart_puts("[main] ROUND-TRIP COMPLETE!\n");
         } else {

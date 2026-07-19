@@ -2,15 +2,17 @@
  * Jupiter SDK — mmu.c
  * MMU + D-cache for Cortex-A7 (ARMv7-A short descriptor, 1MB sections)
  *
- * Memory map (Option A — framebuffers stay uncached):
+ * Memory map (framebuffers cached — explicit clean required):
  *   0x00000000-0x01FFFFFF  Device      Peripherals (DE2, CCU, TCON, UART…)
  *   0x40000000-0x41FFFFFF  Cached WBWA Code, data, stack, tile maps
- *   0x42000000-0x43FFFFFF  Uncached    Framebuffers (DE2 reads from DRAM)
+ *   0x42000000-0x43FFFFFF  Cached WBWA Framebuffers + remaining DRAM
  *
  * The DE2 display engine is a bus master that reads framebuffer data
  * directly from physical DRAM. It does not snoop the CPU cache.
- * Keeping framebuffers uncached means every CPU write is immediately
- * visible to DE2 — no flush required, no tearing from stale cache.
+ * Framebuffers are mapped cached WB/WA so pixel writes accumulate in L1
+ * at ~GB/s; the CPU must then clean (flush) the dirty lines before DE2
+ * scans the buffer — use dcache_clean_range()/dcache_clean_fb() after
+ * rendering and before the swap, or DE2 shows stale DRAM contents.
  *
  * Code/data/stack go cached so tile map lookups, game logic, and all
  * the loop/arithmetic overhead run at L1 speed instead of DDR2 speed.
@@ -120,9 +122,13 @@ void mmu_init(void)
         page_table[i] = (i << 20) | MT_CACHED;
 
     /* TTBR0: page table base + cacheable table walks.
-     * IRGN=01 (Inner WB/WA), RGN=01 (Outer WB/WA).
+     * RGN=01 (Outer WB/WA) = bit 3. On ARMv7 with multiprocessing
+     * extensions (Cortex-A7) IRGN is split: IRGN[0]=bit 6, IRGN[1]=bit 0,
+     * so IRGN=0b01 (Inner WB/WA) = bit 6 set, bit 0 clear (Linux
+     * TTB_IRGN_WBWA = 1<<6). Bit 0 alone would be IRGN=0b10 = inner
+     * write-through — uncached table walks on A7.
      * Without this, every TLB miss goes to raw DRAM (~200ns). */
-    uint32_t ttbr0 = (uint32_t)page_table | (1 << 3) | (1 << 0); /* RGN=01, IRGN=01 */
+    uint32_t ttbr0 = (uint32_t)page_table | (1 << 3) | (1 << 6); /* RGN=01, IRGN=01 */
     __asm__ volatile("mcr p15, 0, %0, c2, c0, 0" :: "r"(ttbr0));
 
     /* TTBCR = 0: TTBR0 covers full 4GB, short descriptor format */
@@ -168,7 +174,7 @@ void mmu_init(void)
 
     /* Readback verification */
     __asm__ volatile("mrc p15, 0, %0, c1, c0, 0" : "=r"(sctlr));
-    uart_puts("[mmu] SCTLR=0x"); uart_puthex(sctlr);
+    uart_puts("[mmu] SCTLR="); uart_puthex(sctlr);
     uart_puts(" M="); uart_putdec(sctlr & 1);
     uart_puts(" C="); uart_putdec((sctlr >> 2) & 1);
     uart_puts(" I="); uart_putdec((sctlr >> 12) & 1);

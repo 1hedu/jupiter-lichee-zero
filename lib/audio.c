@@ -37,6 +37,15 @@ static volatile uint32_t dma_running = 0;
 static uint8_t audio_use_24bit = 0;
 volatile int a_filled = 0, b_filled = 0;
 
+/* Set while a main-loop mixer is writing mix_buf. The DMA ISR also tops
+ * up the ring via audio_mix(); if it fired between the L and R stores of
+ * a main-loop mix (or mid mix_wr++ of any producer) the stereo interleave
+ * would swap permanently and mix_wr would double-advance. The ISR skips
+ * its top-up while this flag is set — the producer is running anyway.
+ * The ISR's own audio_mix call also sets/clears it, which is harmless:
+ * ISRs are never preempted, so the flag is back to 0 before main resumes. */
+static volatile uint8_t mix_in_progress = 0;
+
 /* Forward declaration for ISR */
 static void audio_dma_refill_a(void);
 static void audio_dma_refill_b(void);
@@ -348,30 +357,39 @@ void audio_dma_isr(void)
         return;
     }
 
-    /* STRICT ALTERNATION. The cur_src-based heuristic (which we still
-     * record for diagnostics) was producing alt_break_a events on real
-     * HW: the cur_src readback occasionally lagged across the half
-     * boundary, causing the ISR to think the SAME half just completed
-     * twice — so we'd refill A twice in a row, leaving B stale and
-     * audibly playing back the previous-cycle B data on the next pass.
-     * Strict alternation guarantees each PKG refills the opposite side
-     * of the previous one, regardless of cur_src skew. */
+    /* STRICT ALTERNATION with hardware resync. The pure cur_src
+     * heuristic was producing alt_break_a events on real HW: the
+     * cur_src readback occasionally lagged across the half boundary,
+     * causing the ISR to think the SAME half just completed twice — so
+     * we'd refill A twice in a row, leaving B stale and audibly playing
+     * back the previous-cycle B data on the next pass. Strict
+     * alternation fixes that, but inverts PERMANENTLY if a PKG
+     * interrupt is ever missed (both halves complete, one ISR entry) —
+     * every refill from then on targets the half the DMA is reading.
+     * So when cur_src contradicts the alternation prediction, trust the
+     * hardware: refill the half the DMA is NOT reading and realign
+     * audio_next_refill_b. A lagged readback can still cause a one-shot
+     * wrong pick (counted in audio_dbg_cursrc_disagree), but the state
+     * can no longer stay inverted. */
     uint32_t cur = DMA_CH_CUR_SRC(0);
     uint32_t half = audio_use_24bit ? DMA_HALF_BYTES_32 : DMA_HALF_BYTES_16;
     int cursrc_says_a_done = (cur >= (AUDIO_BUF_ADDR + half));  /* DMA in B → A done */
+
+    if (cursrc_says_a_done == (audio_next_refill_b != 0)) {
+        audio_dbg_cursrc_disagree++;
+        audio_next_refill_b = cursrc_says_a_done ? 0 : 1;
+    }
 
     if (audio_next_refill_b) {
         audio_dma_refill_b();
         audio_dbg_refill_b++;
         if (audio_dbg_last_was_a == 0) audio_dbg_alt_break_b++;
         audio_dbg_last_was_a = 0;
-        if (cursrc_says_a_done)  audio_dbg_cursrc_disagree++;
     } else {
         audio_dma_refill_a();
         audio_dbg_refill_a++;
         if (audio_dbg_last_was_a == 1) audio_dbg_alt_break_a++;
         audio_dbg_last_was_a = 1;
-        if (!cursrc_says_a_done) audio_dbg_cursrc_disagree++;
     }
     audio_next_refill_b ^= 1;
     audio_transitions++;
@@ -384,14 +402,17 @@ void audio_dma_isr(void)
      * music skips. Refilling from the ISR makes mixing frame-rate-
      * independent — same approach the cedar_video_av example uses.
      *
-     * Bounded: refill exactly what was just consumed (AUDIO_BUF_HALF
-     * stereo frames = 2*AUDIO_BUF_HALF mix_buf slots). Skipped if the
+     * Bounded: refill exactly what was just consumed (a half-refill
+     * drains AUDIO_BUF_HALF mix_buf slots = AUDIO_BUF_HALF/2 stereo
+     * frames — audio_mix writes 2 slots per frame). Skipped if the
      * producer already has mix_buf above target depth, so a fast game
-     * frame won't double-mix and overflow the ring. */
+     * frame won't double-mix and overflow the ring. Also skipped while
+     * the main loop is inside a mixer (mix_in_progress) — mixing here
+     * then would swap the L/R interleave and corrupt mix_wr. */
     {
         uint32_t depth = mix_wr - mix_rd;
-        if (depth + (uint32_t)(AUDIO_BUF_HALF * 2) <= MIX_BUF_SIZE) {
-            audio_mix(AUDIO_BUF_HALF);
+        if (!mix_in_progress && depth + (uint32_t)AUDIO_BUF_HALF <= MIX_BUF_SIZE) {
+            audio_mix(AUDIO_BUF_HALF / 2);
         }
     }
 }
@@ -428,6 +449,8 @@ void audio_update(void)
  * convention — codec DMA reads mix_buf as 16-bit stereo interleaved, so
  * mono PCM channels are duplicated into L+R. */
 void audio_mix(uint32_t num_samples) {
+    mix_in_progress = 1;
+    __asm__ volatile("" ::: "memory");
     for (uint32_t s = 0; s < num_samples; s++) {
         int32_t sum = 0;
         for (int ch = 0; ch < AUDIO_MAX_CHANNELS; ch++) {
@@ -448,13 +471,16 @@ void audio_mix(uint32_t num_samples) {
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;  /* L */
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;  /* R */
     }
+    __asm__ volatile("" ::: "memory");
+    mix_in_progress = 0;
 }
 void audio_pcm_play(uint32_t ch, const int16_t *s, uint32_t len, uint8_t vol, uint8_t loop) {
-    if (ch >= AUDIO_MAX_CHANNELS) return;
-    pcm_channel_t *c = &channels[ch];
-    c->samples=s; c->length=len; c->pos_int=0; c->pos_frac=0;
-    c->pos_step = 1u << 16;        /* native-rate playback */
-    c->volume=vol; c->loop=loop; c->active=1;
+    /* Delegate to the rate-aware path. src_rate=0 means "current output
+     * rate", and since current_audio_rate_q8 is always rate*256 that
+     * yields pos_step exactly 1<<16 — native-rate playback, same as
+     * before — while gaining the deactivate/barrier sequence so the
+     * mixing ISR can't observe a half-updated channel. */
+    audio_pcm_play_rate(ch, s, len, vol, loop, 0);
 }
 /* Forward decls — defined further down (audio_set_rate section). The Q8
  * variant is what the resampler reads so we keep sub-Hz precision in
@@ -561,11 +587,15 @@ static void apu_envelope_tick(void) {
             int8_t nv=(int8_t)n->volume+n->env_dir;if(nv>=0&&nv<=15)n->volume=nv;}}
 }
 void audio_apu_mix(uint32_t num) {
+    mix_in_progress = 1;                 /* keep ISR top-up off mix_wr */
+    __asm__ volatile("" ::: "memory");
     for(uint32_t s=0;s<num;s++){
         int32_t out=((int32_t)apu_tick()*master_volume)>>8;
         mix_buf[mix_wr++&MIX_BUF_MASK]=(int16_t)out;
         if(++apu_env_tick>=ENV_INTERVAL){apu_env_tick=0;apu_envelope_tick();}
     }
+    __asm__ volatile("" ::: "memory");
+    mix_in_progress = 0;
 }
 void audio_apu_note_on(uint32_t ch,uint32_t f,uint8_t v,uint8_t d){
     if(ch>1) return;
@@ -739,10 +769,14 @@ static inline __attribute__((always_inline)) void fm_env_tick(fm_op_t *op)
         if (rate == 0) break;
         /* YM2612 attack: exponential decrease toward 0 (not linear).
          * dec = rate * (1 + env/16) — fast at top, slows near full volume.
+         * Computed in 32-bit: rate*env reaches ~1023*1023>>4 ≈ 65408,
+         * so the old uint16 intermediate (+rate) wrapped for the top
+         * rates, stalling the attack. Clamp to the 1023 env ceiling.
          * Reference: jsgroth.dev/blog/posts/emulating-ym2612-part-3/ */
-        uint16_t dec = rate + ((uint16_t)((uint32_t)rate * op->env >> 4));
+        uint32_t dec = (uint32_t)rate + (((uint32_t)rate * op->env) >> 4);
+        if (dec > 1023) dec = 1023;
         if (op->env > dec)
-            op->env -= dec;
+            op->env -= (uint16_t)dec;
         else {
             op->env = 0;
             op->env_state = ENV_DEC;
@@ -928,6 +962,8 @@ static int16_t psg_tone_tick(psg_tone_t *t)
 /* ---- Genesis mixer: FM + PSG → ring buffer ---- */
 void audio_genesis_mix(uint32_t num_samples)
 {
+    mix_in_progress = 1;                 /* keep ISR top-up off mix_wr */
+    __asm__ volatile("" ::: "memory");
     for (uint32_t s = 0; s < num_samples; s++) {
         /* Envelope prescaler: tick every 3rd sample (matches YM2612 hw) */
         fm_env_tick_now = (fm_env_div_count == 0) ? 1 : 0;
@@ -967,6 +1003,8 @@ void audio_genesis_mix(uint32_t num_samples)
         if (sum < -32768) sum = -32768;
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;
     }
+    __asm__ volatile("" ::: "memory");
+    mix_in_progress = 0;
 }
 
 /* ---- FM public API ---- */

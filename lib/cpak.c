@@ -106,21 +106,25 @@ int cpak_probe(void)
 
     /* Step 2: try a READ at 0x8000 BEFORE writing. */
     cpak_inter_cmd_gap();
-    extern volatile int n64_dbg_bits_got;
-    extern volatile int n64_dbg_first_to_us;
-    extern volatile int n64_dbg_recv_buf_bytes;
     uint8_t readback[CPAK_BLOCK_SIZE];
     memset(readback, 0xCC, CPAK_BLOCK_SIZE);
     int rrc1 = cpak_read_block(0x400, readback);
-    uart_puts("[cpak] probe read1 rc="); uart_putdec((uint32_t)(-rrc1));
-    uart_puts(" bytes_in_buf="); uart_putdec((uint32_t)n64_dbg_recv_buf_bytes);
-    uart_puts(" bits_in_failed_byte="); uart_putdec((uint32_t)n64_dbg_bits_got);
-    uart_puts(" to_us="); uart_putdec((uint32_t)n64_dbg_first_to_us);
-    uart_puts("\n[cpak]   readback first8=");
-    for (int i = 0; i < 8; i++) {
-        uart_puthex(readback[i]); uart_puts(" ");
+#ifdef CPAK_DEBUG
+    {
+        extern volatile int n64_dbg_bits_got;
+        extern volatile int n64_dbg_first_to_us;
+        extern volatile int n64_dbg_recv_buf_bytes;
+        uart_puts("[cpak] probe read1 rc="); uart_putdec((uint32_t)(-rrc1));
+        uart_puts(" bytes_in_buf="); uart_putdec((uint32_t)n64_dbg_recv_buf_bytes);
+        uart_puts(" bits_in_failed_byte="); uart_putdec((uint32_t)n64_dbg_bits_got);
+        uart_puts(" to_us="); uart_putdec((uint32_t)n64_dbg_first_to_us);
+        uart_puts("\n[cpak]   readback first8=");
+        for (int i = 0; i < 8; i++) {
+            uart_puthex(readback[i]); uart_puts(" ");
+        }
+        uart_puts("\n");
     }
-    uart_puts("\n");
+#endif
 
     /* Step 2b: if read1 timed out, trace the line state for 1 ms after
      * sending a fresh Read CMD to determine whether the controller is
@@ -128,6 +132,7 @@ int cpak_probe(void)
      * (and our TX was rejected). Records every falling edge in the
      * window. */
     if (rrc1 == -1) {
+#ifdef CPAK_DEBUG
         cpak_inter_cmd_gap();
         uint16_t addr = cpak_addr_crc(0x400 << 5);
         uint32_t saved = n64_joybus_lock();
@@ -162,6 +167,7 @@ int cpak_probe(void)
             }
         }
         uart_puts("\n");
+#endif /* CPAK_DEBUG */
 
         return CPAK_NONE;
     }
@@ -172,14 +178,16 @@ int cpak_probe(void)
 
     cpak_inter_cmd_gap();
     int wrc = cpak_write_block(0x400, pattern);
-    extern volatile uint8_t cpak_dbg_crc_calc_32;
-    extern volatile uint8_t cpak_dbg_crc_calc_33;
-    extern volatile uint8_t cpak_dbg_crc_device;
-    uart_puts("[cpak] probe write rc="); uart_putdec((uint32_t)(-wrc));
-    uart_puts(" crc_dev=0x"); uart_puthex(cpak_dbg_crc_device);
-    uart_puts(" crc_us_32=0x"); uart_puthex(cpak_dbg_crc_calc_32);
-    uart_puts(" crc_us_33=0x"); uart_puthex(cpak_dbg_crc_calc_33);
-    uart_puts("\n");
+#ifdef CPAK_DEBUG
+    {
+        extern volatile uint8_t cpak_dbg_crc_calc;
+        extern volatile uint8_t cpak_dbg_crc_device;
+        uart_puts("[cpak] probe write rc="); uart_putdec((uint32_t)(-wrc));
+        uart_puts(" crc_dev=0x"); uart_puthex(cpak_dbg_crc_device);
+        uart_puts(" crc_us=0x"); uart_puthex(cpak_dbg_crc_calc);
+        uart_puts("\n");
+    }
+#endif
     if (wrc < 0) return CPAK_NONE;
 
     cpak_inter_cmd_gap();
@@ -250,28 +258,12 @@ int cpak_read_block(uint16_t block, uint8_t out[CPAK_BLOCK_SIZE])
     return -2;
 }
 
-/* Diagnostics for CRC algorithm verification: dump our 32-iter CRC,
- * an alternative 33-iter CRC, and the device's returned CRC so we
- * can see exactly which one the hardware uses for write-confirms. */
-volatile uint8_t cpak_dbg_crc_calc_32 = 0;
-volatile uint8_t cpak_dbg_crc_calc_33 = 0;
-volatile uint8_t cpak_dbg_crc_device  = 0;
-
-static uint8_t cpak_data_crc_33(const uint8_t buf[CPAK_BLOCK_SIZE])
-{
-    /* Old form: 32 data bytes + 1 zero-augmentation byte. */
-    uint8_t crc = 0;
-    for (int i = 0; i < CPAK_BLOCK_SIZE + 1; i++) {
-        uint8_t byte = (i < CPAK_BLOCK_SIZE) ? buf[i] : 0;
-        for (int b = 7; b >= 0; b--) {
-            int hi = (crc & 0x80) ? 1 : 0;
-            crc = (uint8_t)(crc << 1);
-            if (byte & (1u << b)) crc ^= 1;
-            if (hi) crc ^= 0x85;
-        }
-    }
-    return crc;
-}
+#ifdef CPAK_DEBUG
+/* Diagnostics for CRC algorithm verification: our computed CRC and the
+ * device's returned CRC for the last write-confirm. */
+volatile uint8_t cpak_dbg_crc_calc   = 0;
+volatile uint8_t cpak_dbg_crc_device = 0;
+#endif
 
 int cpak_write_block(uint16_t block, const uint8_t in[CPAK_BLOCK_SIZE])
 {
@@ -296,16 +288,14 @@ int cpak_write_block(uint16_t block, const uint8_t in[CPAK_BLOCK_SIZE])
 
     if (crc_rc < 0) return -1;
 
-    cpak_dbg_crc_device  = crc_rx;
-    cpak_dbg_crc_calc_33 = cpak_data_crc_33(in);
-    uint8_t crc_calc     = cpak_data_crc(in);
-    cpak_dbg_crc_calc_32 = crc_calc;
+    uint8_t crc_calc = cpak_data_crc(in);
+#ifdef CPAK_DEBUG
+    cpak_dbg_crc_device = crc_rx;
+    cpak_dbg_crc_calc   = crc_calc;
+#endif
 
     if (crc_rx == crc_calc)                   return 0;
     if (crc_rx == (uint8_t)(crc_calc ^ 0xFF)) return -2;   /* pak absent */
-    /* Try the alternate 33-iter algorithm too — if device matches that,
-     * we know we picked the wrong CRC variant and can switch. */
-    if (crc_rx == cpak_dbg_crc_calc_33) return 0;
     return -2;
 }
 
@@ -314,21 +304,20 @@ int cpak_write_block(uint16_t block, const uint8_t in[CPAK_BLOCK_SIZE])
 /* ================================================================== */
 int cpak_read(uint32_t offset, void *buf, uint32_t len)
 {
-    if (offset + len > CPAK_TOTAL_BYTES) return -1;
+    /* Overflow-safe range check (offset + len could wrap a uint32_t). */
+    if (offset > CPAK_TOTAL_BYTES || len > CPAK_TOTAL_BYTES - offset) return -1;
 
     uint8_t *dst = (uint8_t *)buf;
     uint8_t blk[CPAK_BLOCK_SIZE];
 
-    /* Inter-command gap between consecutive cpak ops — the controller
-     * silently drops commands fired back-to-back without one. The probe
-     * uses a 100 µs gap; we replicate it between each block read here. */
+    /* No explicit inter-command gap here: cpak_read_block() inserts the
+     * mandatory 100 µs gap itself before every transaction. */
     while (len > 0) {
         uint16_t block = offset / CPAK_BLOCK_SIZE;
         uint32_t in_block = offset % CPAK_BLOCK_SIZE;
         uint32_t take = CPAK_BLOCK_SIZE - in_block;
         if (take > len) take = len;
 
-        cpak_inter_cmd_gap();
         int rc = cpak_read_block(block, blk);
         if (rc < 0) return rc;
 
@@ -343,11 +332,13 @@ int cpak_read(uint32_t offset, void *buf, uint32_t len)
 
 int cpak_write(uint32_t offset, const void *buf, uint32_t len)
 {
-    if (offset + len > CPAK_TOTAL_BYTES) return -1;
+    /* Overflow-safe range check (offset + len could wrap a uint32_t). */
+    if (offset > CPAK_TOTAL_BYTES || len > CPAK_TOTAL_BYTES - offset) return -1;
 
     const uint8_t *src = (const uint8_t *)buf;
     uint8_t blk[CPAK_BLOCK_SIZE];
 
+    /* No explicit inter-command gap here: the block ops gap internally. */
     while (len > 0) {
         uint16_t block = offset / CPAK_BLOCK_SIZE;
         uint32_t in_block = offset % CPAK_BLOCK_SIZE;
@@ -355,13 +346,11 @@ int cpak_write(uint32_t offset, const void *buf, uint32_t len)
         if (put > len) put = len;
 
         if (in_block != 0 || put != CPAK_BLOCK_SIZE) {
-            cpak_inter_cmd_gap();
             int rc = cpak_read_block(block, blk);
             if (rc < 0) return rc;
         }
         for (uint32_t i = 0; i < put; i++) blk[in_block + i] = src[i];
 
-        cpak_inter_cmd_gap();
         int rc = cpak_write_block(block, blk);
         if (rc < 0) return rc;
 

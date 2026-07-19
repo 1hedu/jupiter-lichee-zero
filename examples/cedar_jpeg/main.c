@@ -98,6 +98,16 @@ int main(void)
     uart_puts("\n");
     REG32(0x01C0E000) = 0x00130007; /* idle */
 
+    /* Init display BEFORE decoding — video_init() clears the DRAM
+     * region the cedar buffers live in, so decoding first would have
+     * its output wiped before the NV12→ARGB conversion below. */
+    video_init();
+    volatile uint32_t *fb = (volatile uint32_t *)FB0_ADDR;
+
+    /* Clear to dark gray */
+    for (uint32_t i = 0; i < LCD_W * LCD_H; i++)
+        fb[i] = 0xFF222222;
+
     /* Decode: 64x64, header_bit_size=36 (from ffmpeg trace_headers).
      * Extra args added when the API grew: pic_init_qp, slice_qp_delta,
      * chroma_qp_off, disable_deblock — match what cedar_genesis uses. */
@@ -115,14 +125,6 @@ int main(void)
         uart_putdec((uint32_t)(-rc));
         uart_puts("\n");
     }
-
-    /* Init display */
-    video_init();
-    volatile uint32_t *fb = (volatile uint32_t *)FB0_ADDR;
-
-    /* Clear to dark gray */
-    for (uint32_t i = 0; i < LCD_W * LCD_H; i++)
-        fb[i] = 0xFF222222;
 
     if (rc == 0) {
         uart_puts("[main] converting NV12->ARGB...\n");

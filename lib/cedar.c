@@ -13,31 +13,43 @@
 #define VE(off)  REG32(VE_BASE + (off))
 #define VEB(off) (*(volatile uint8_t *)(VE_BASE + (off)))
 
-/* Buffer layout in upper DRAM. Originally at 0x43000000-0x432FFFFF —
- * but with 38 MB of bss in the war1 build that range collides with
- * live in-use bss, and cedar's per-frame writes corrupted the tile
- * map / unit state during the briefing cinematic. Moved into the
- * free VRAM gap (0x43E00000-0x43F00000, 1MB) which sits between
- * AUDIO_BUF (0x43D00000) and NAL_STAGE (0x43F00000). */
-#define BUF_INPUT     0x43E00000  /* 256KB for H264 bitstream */
-#define BUF_PIC_INFO  0x43E40000  /* 256KB */
-#define BUF_NEIGHBOR  0x43E80000  /* 32KB */
-#define BUF_MV_COL    0x43E88000  /* 64KB */
-#define BUF_LUMA      0x43E98000  /* up to 512*480 = 240KB */
-#define BUF_CHROMA    0x43ED8000  /* up to 120KB */
+/* Buffer layout: the VE's DMA buffers live in the unused top halves of
+ * the five 1 MB VRAM display slots (each display buffer occupies only
+ * 510 KB of its slot — see FB0_ADDR..OVL1_ADDR in v3s.h). This keeps
+ * them out of the CODE region (a war1-sized bss collides with anything
+ * below 0x43800000 — cedar's per-frame writes used to corrupt the tile
+ * map / unit state during the briefing cinematic) and clear of the
+ * 0x43D00000 audio buffer + example scratch and the 0x43F00000 NAL
+ * staging area.
+ *
+ * The encoder (cedar_enc.c) shares some of these slots: its NV12 input
+ * occupies the same slots as the decoder's NV12 output, and its recon
+ * buffer overlays BUF_INPUT/BUF_PIC_INFO. That is safe because encode
+ * and decode never run concurrently — a decode may follow an encode
+ * (the cedar_snes round-trip) since each phase rewrites its own
+ * buffers on entry. Keep the two files' layouts in sync!
+ *
+ *   0x43880000  BUF_LUMA      512 KB  (= enc NV12 Y slot)
+ *   0x43980000  BUF_CHROMA    256 KB  (= enc NV12 UV slot)
+ *   0x439C0000  (enc SUBPIX   256 KB)
+ *   0x43A80000  BUF_INPUT     256 KB  (= enc REC luma slot)
+ *   0x43AC0000  BUF_PIC_INFO  256 KB  (      "        )
+ *   0x43B80000  BUF_NEIGHBOR   32 KB
+ *   0x43B88000  BUF_MV_COL     64 KB
+ *   0x43B98000  (enc MB_INFO   16 KB)
+ *   0x43BA0000  (enc REC chroma 384 KB)
+ *   0x43F00000  (enc STREAM     1 MB — shared with example NAL staging)
+ */
+#define BUF_INPUT     0x43A80000  /* 256KB for H264 bitstream */
+#define BUF_PIC_INFO  0x43AC0000  /* 256KB */
+#define BUF_NEIGHBOR  0x43B80000  /* 32KB */
+#define BUF_MV_COL    0x43B88000  /* 64KB */
+#define BUF_LUMA      0x43880000  /* NV12 luma out, up to 512KB */
+#define BUF_CHROMA    0x43980000  /* NV12 chroma out, up to 256KB */
 
-/* Encoder buffers — reuse decoder buffer addresses (known VE-accessible) */
-#define BUF_ENC_LUMA   BUF_LUMA     /* 0x43100000 — decoder writes here OK */
-#define BUF_ENC_CHROMA BUF_CHROMA   /* 0x43200000 */
-#define BUF_ENC_OUT    BUF_INPUT    /* 0x43000000 — decoder reads here OK */
-#define BUF_ENC_OUT_SZ 0x00100000
-
-/* ISP registers (input for encoder) */
-#define ISP_INPUT_SIZE    0xA00
-#define ISP_INPUT_STRIDE  0xA04
-#define ISP_CTRL          0xA08
-#define ISP_INPUT_LUMA    0xA78
-#define ISP_INPUT_CHROMA  0xA7C
+#define BUF_INPUT_SIZE   0x40000
+#define BUF_LUMA_SIZE    0x80000
+#define BUF_CHROMA_SIZE  0x40000
 
 /* VLD address encoding */
 #define VLD_ADDR_VAL(x)  (((x)&0x0FFFFFF0)|((x)>>28))
@@ -63,7 +75,11 @@ void cedar_init(void)
         pll &= ~(0xFu << 0);
         pll |= (67u << 8) | (3u << 0) | (1u << 31);
         REG32(CCU_BASE + 0x0018) = pll;
-        while (!(REG32(CCU_BASE + 0x0018) & (1u << 28)));
+        /* Bounded lock wait — a hung PLL must not hang the system */
+        uint32_t lock_timeout = 10000000;
+        while (!(REG32(CCU_BASE + 0x0018) & (1u << 28)) && --lock_timeout);
+        if (!lock_timeout)
+            uart_puts("[cedar] WARN: PLL_VE lock timeout\n");
     }
 
     /* All clocks ON, then reset (aodzip/BSP order) */
@@ -79,9 +95,9 @@ void cedar_init(void)
 
     VE(0x000) = 0x00130007;  /* park idle */
 
-    uart_puts("[cedar] VE=0x");
+    uart_puts("[cedar] VE=");
     uart_puthex(VE(0x0F0));
-    uart_puts(" PLL=0x");
+    uart_puts(" PLL=");
     uart_puthex(REG32(CCU_BASE + 0x0018));
     uart_puts("\n");
 }
@@ -164,12 +180,24 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     uint32_t mb_h = (h + 15) / 16;
     uint32_t stride = mb_w * 16;
 
+    /* Reject frames that would overflow the fixed output slots — the
+     * VE would silently DMA past them into neighboring buffers. */
+    if (stride * mb_h * 16 > BUF_LUMA_SIZE ||
+        stride * mb_h * 8 > BUF_CHROMA_SIZE) {
+        uart_puts("[cedar] frame too large for output buffers\n");
+        return -1;
+    }
+
     uint32_t nal_len = 0;
     const uint8_t *nal = find_nal(h264, h264_sz, 5, &nal_len);
     if (!nal) { uart_puts("[cedar] no IDR\n"); return -1; }
 
     /* Copy NAL to aligned buffer */
     uint32_t padded = (nal_len + 4095) & ~4095;
+    if (padded > BUF_INPUT_SIZE) {
+        uart_puts("[cedar] NAL too large for input buffer\n");
+        return -1;
+    }
     memset((void *)BUF_INPUT, 0, padded);
     memcpy((void *)BUF_INPUT, nal, nal_len);
     dcache_clean_range(BUF_INPUT, padded);
@@ -221,10 +249,9 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     VE(0x230) = VLD_ADDR_VAL(BUF_INPUT) | VLD_FLAGS;
 
     VE(0x224) = 7;  /* INIT_SWDEC */
-    wait_vld();
-    if (skip_bits(hdr_bits) < 0) {
+    if (wait_vld() < 0 || skip_bits(hdr_bits) < 0) {
         uart_puts("[cedar] VLD flush fail\n");
-        VE(0x000) = 7; return -2;
+        VE(0x000) = 0x00130007; return -2;
     }
 
     /* SPS: chroma=1, frame_mbs_only=1
@@ -281,248 +308,11 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
         }
         return 0;
     }
-    uart_puts("[cedar] FAIL status=0x");
+    uart_puts("[cedar] FAIL status=");
     uart_puthex(status);
     uart_puts("\n");
     return -3;
 }
-
-/* Encoder moved to cedar_enc.c */
-#if 0 /* OLD ENCODER CODE */
-static void old_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
-                        uint32_t w, uint32_t h)
-{
-    uint32_t stride = (w + 15) & ~15;
-    uint8_t *Y  = (uint8_t *)BUF_ENC_LUMA;
-    uint8_t *UV = (uint8_t *)BUF_ENC_CHROMA;
-
-    for (uint32_t r = 0; r < h; r++) {
-        for (uint32_t c = 0; c < w; c++) {
-            uint32_t px = src[r * src_pitch + c];
-            int R = (px >> 16) & 0xFF;
-            int G = (px >> 8)  & 0xFF;
-            int B =  px        & 0xFF;
-            /* BT.601 full-range */
-            int y = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
-            if (y < 0) y = 0; if (y > 255) y = 255;
-            Y[r * stride + c] = (uint8_t)y;
-
-            if ((r & 1) == 0 && (c & 1) == 0) {
-                int u = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
-                int v = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
-                if (u < 0) u = 0; if (u > 255) u = 255;
-                if (v < 0) v = 0; if (v > 255) v = 255;
-                UV[(r/2) * stride + (c & ~1)]     = (uint8_t)u;
-                UV[(r/2) * stride + (c & ~1) + 1] = (uint8_t)v;
-            }
-        }
-        /* Pad stride */
-        for (uint32_t c = w; c < stride; c++)
-            Y[r * stride + c] = 16;
-    }
-
-    uint32_t luma_sz = stride * ((h + 15) & ~15);
-    uint32_t chroma_sz = luma_sz / 2;
-    dcache_clean_range(BUF_ENC_LUMA, luma_sz);
-    dcache_clean_range(BUF_ENC_CHROMA, chroma_sz);
-}
-
-/* ================================================================== */
-/* H.264 I-frame ENCODE via AVC engine (+0xB00)                         */
-/*                                                                      */
-/* From libcedarjpeg veavc.c + veisp.c + Bootlin encode work.           */
-/* Input: NV12 at BUF_ENC_LUMA/CHROMA (from cedar_argb_to_nv12)         */
-/* Output: H.264 bitstream at BUF_ENC_OUT                               */
-/* Returns: encoded size in bytes, or negative on error                  */
-/* ================================================================== */
-int cedar_h264_encode(uint32_t w, uint32_t h, int qp,
-                      const uint8_t *nal_header, uint32_t nal_header_len)
-{
-    uint32_t mb_w = (w + 15) / 16;
-    uint32_t mb_h = (h + 15) / 16;
-    uint32_t stride = mb_w * 16;
-
-    /* Fill output with canary pattern (0xAA) to detect if encoder writes here */
-    memset((void *)BUF_ENC_OUT, 0xAA, BUF_ENC_OUT_SZ);
-    dcache_clean_range(BUF_ENC_OUT, BUF_ENC_OUT_SZ);
-
-    /* Bootlin encoder init sequence (cedrus_enc.c lines 62-88):
-     * 1. Disable encoder + ISP, set decoder disabled
-     * 2. Reset encoder via VE_RESET_REG (offset 0x04)
-     * 3. Enable encoder + ISP */
-    {
-        uint32_t mode = VE(0x000);
-        mode &= ~((1u << 7) | (1u << 6));  /* clear enc + ISP enable */
-        mode |= 0x07;                       /* decoder disabled */
-        VE(0x000) = mode;
-
-        /* Encoder reset pulse via VE_RESET_REG (0x04) bit 24 */
-        VE(0x004) = VE(0x004) | (1u << 24);
-        for (volatile int i = 0; i < 1000; i++);
-        VE(0x004) = VE(0x004) & ~(1u << 24);
-        for (volatile int i = 0; i < 1000; i++);
-
-        /* Enable encoder (bit7) + ISP (bit6), keep decoder disabled */
-        mode = VE(0x000);
-        mode |= (1u << 7) | (1u << 6) | 0x07;
-        VE(0x000) = mode;
-    }
-
-    /* ISP: set input NV12 buffers
-     * Try DRAM-relative — the encoder ISP might not use full physical
-     * like the decoder does */
-    {
-        uint32_t pic_size = ((mb_w & 0x3FF) << 16) | (mb_h & 0x3FF);
-        uint32_t pic_stride = ((stride / 16) << 16);
-        VE(ISP_INPUT_SIZE) = pic_size;
-        VE(ISP_INPUT_STRIDE) = pic_stride;
-        /* ISP scaler size (from Bootlin: 0xA00 + 0x2C = 0xA2C) */
-        VE(0xA2C) = ((mb_h & 0x7FF) << 16) | (mb_w & 0x7FF);
-        /* ISP ctrl: YUV420SP format + BT601 colorspace (from Bootlin) */
-        VE(ISP_CTRL) = (0u << 27) | (0u << 20) | (0u << 1);
-        VE(ISP_INPUT_LUMA) = BUF_ENC_LUMA - 0x40000000;
-        VE(ISP_INPUT_CHROMA) = BUF_ENC_CHROMA - 0x40000000;
-    }
-
-    /* VLE: output bitstream buffer (DRAM-relative) */
-    VE(0xB80) = BUF_ENC_OUT - 0x40000000;
-    VE(0xB84) = BUF_ENC_OUT + BUF_ENC_OUT_SZ - 1 - 0x40000000;
-    VE(0xB88) = 0;                                   /* VLE_OFFSET */
-    uint32_t maxbits = BUF_ENC_OUT_SZ * 8;
-    if (maxbits > 0x0FFF0000) maxbits = 0x0FFF0000;
-    VE(0xB8C) = maxbits;                             /* VLE_MAX */
-
-    /* AVC encoder init */
-    VE(0xB14) = 0x0000000F;   /* AVC_CTRL: enable all IRQs */
-    VE(0xB18) = (0u << 16);   /* AVC_TRIGGER: H264 mode init */
-
-    /* Clear status */
-    uint32_t status = VE(0xB1C);
-    VE(0xB1C) = status | 0xF;
-
-    VE(0xBA0) = BUF_ENC_LUMA - 0x40000000;
-    VE(0xBA4) = BUF_ENC_CHROMA - 0x40000000;
-    VE(0xBB0) = BUF_ENC_LUMA - 0x40000000;
-    VE(0xBB4) = BUF_ENC_CHROMA - 0x40000000;
-
-    /* AVC_PARAM: QP and encoding parameters */
-    VE(0xB04) = (1u << 31) |    /* fill1 */
-                (1u << 30) |    /* stuff byte enable */
-                (0u << 16) |    /* chroma bias */
-                (0u << 0);      /* luma bias */
-
-    /* AVC_QP */
-    VE(0xB08) = (qp & 0x3F) | ((qp & 0x3F) << 8);  /* QP luma + chroma */
-
-    /* AVC_MOTION_EST: disable for I-frame */
-    VE(0xB10) = 0;
-
-    /* Write NAL headers via put_bits AFTER mode init (before launch).
-     * The mode init trigger above reset VLE_OFFSET to 0.
-     * put_bits writes sequentially, encoder appends after. */
-    if (nal_header && nal_header_len > 0) {
-        for (uint32_t i = 0; i < nal_header_len; i++) {
-            VE(0xB20) = ((uint32_t)nal_header[i]) << 24;  /* MSB-first */
-            VE(0xB18) = (0u << 16) | (8 << 8) | 1;        /* 8 bits, H264 mode */
-        }
-        uart_puts("[cedar] wrote "); uart_putdec(nal_header_len); uart_puts("B hdr via put_bits\n");
-    }
-
-    uart_puts("[cedar] encoding "); uart_putdec(w); uart_puts("x");
-    uart_putdec(h); uart_puts(" QP="); uart_putdec(qp); uart_puts("...\n");
-
-    /* Launch encoding — encoder appends macroblocks after headers */
-    VE(0xB18) = (0u << 16) | 8;  /* H264 mode, encode trigger */
-
-    /* Wait for completion */
-    uint32_t timeout = 50000000;
-    do { status = VE(0xB1C); }
-    while (!(status & 0xF) && --timeout);
-
-    uint32_t encoded_bits = VE(0xB90);  /* VLE_LENGTH */
-    uint32_t encoded_bytes = encoded_bits / 8;
-
-    /* Read registers BEFORE going idle (idle blanks everything) */
-    uint32_t vle_addr_post = VE(0xB80);
-    uint32_t vle_len_post = VE(0xB90);
-    uint32_t isp_luma_post = VE(0xA78);
-    uint32_t isp_chroma_post = VE(0xA7C);
-
-    VE(0xB1C) = 0xF;
-    VE(0x000) = 0x00130007;
-
-    dcache_invalidate_range(BUF_ENC_OUT, encoded_bytes + 64);
-
-    uart_puts("[cedar] encode status=0x"); uart_puthex(status);
-    if (status & 1) {
-        uart_puts(" OK ");
-        uart_putdec(encoded_bytes); uart_puts("B");
-
-        /* Register dump (captured before idle) */
-        uart_puts("\n[cedar] VLE: ADDR=0x"); uart_puthex(vle_addr_post);
-        uart_puts(" LEN=0x"); uart_puthex(vle_len_post);
-        uart_puts("\n[cedar] ISP: LUMA=0x"); uart_puthex(isp_luma_post);
-        uart_puts(" CHROMA=0x"); uart_puthex(isp_chroma_post);
-        uart_puts("\n");
-
-        /* Invalidate large range and check multiple locations */
-        dcache_invalidate_range(BUF_ENC_OUT, 0x10000);
-
-        /* Find first non-canary (non-0xAA) byte in the buffer */
-        int first_diff = -1;
-        volatile uint8_t *obuf = (volatile uint8_t *)BUF_ENC_OUT;
-        for (int i = 0; i < 0x10000; i++) {
-            if (obuf[i] != 0xAA) { first_diff = i; break; }
-        }
-        uart_puts("[cedar] first non-0xAA at offset ");
-        if (first_diff >= 0) {
-            uart_putdec(first_diff);
-            uart_puts(": ");
-            for (int i = first_diff; i < first_diff + 16 && i < 0x10000; i++) {
-                uart_puthex(obuf[i]); uart_puts(" ");
-            }
-        } else {
-            uart_puts("NONE (buffer untouched by encoder!)");
-        }
-        uart_puts("\n");
-
-        /* Also check if VLE_ADDR readback suggests different address mapping */
-        uint32_t vle_addr_rb = VE(0xB80);
-        if (vle_addr_rb != BUF_ENC_OUT) {
-            uart_puts("[cedar] VLE_ADDR mismatch! wrote 0x");
-            uart_puthex(BUF_ENC_OUT);
-            uart_puts(" read 0x"); uart_puthex(vle_addr_rb);
-            /* Try reading from the readback address */
-            dcache_invalidate_range(vle_addr_rb, 64);
-            uart_puts("\n[cedar] @readback_addr: ");
-            volatile uint8_t *alt = (volatile uint8_t *)(uintptr_t)vle_addr_rb;
-            for (int i = 0; i < 8; i++) { uart_puthex(alt[i]); uart_puts(" "); }
-            /* Also try readback + 0x40000000 */
-            uint32_t alt2 = vle_addr_rb + 0x40000000;
-            if (alt2 >= 0x40000000 && alt2 < 0x44000000) {
-                dcache_invalidate_range(alt2, 64);
-                uart_puts("\n[cedar] @rb+0x40M: ");
-                volatile uint8_t *a2 = (volatile uint8_t *)(uintptr_t)alt2;
-                for (int i = 0; i < 8; i++) { uart_puthex(a2[i]); uart_puts(" "); }
-            }
-        }
-
-        /* Check SRAM_C for encoded data (VLE might write there) */
-        uart_puts("\n[cedar] SRAM@0x01D00000: ");
-        for (int i = 0; i < 8; i++) {
-            uart_puthex(((volatile uint8_t *)0x01D00000)[i]); uart_puts(" ");
-        }
-        uart_puts("\n[cedar] SRAM@0x01D00100: ");
-        for (int i = 0; i < 8; i++) {
-            uart_puthex(((volatile uint8_t *)0x01D00100)[i]); uart_puts(" ");
-        }
-        uart_puts("\n");
-        uart_puts("\n");
-        return (int)encoded_bytes;
-    }
-    if (timeout == 0) uart_puts(" TIMEOUT");
-    uart_puts(" FAIL\n");
-#endif /* OLD ENCODER CODE */
 
 /* ================================================================== */
 /* NV12 → ARGB into a destination buffer                                */

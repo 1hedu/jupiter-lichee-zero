@@ -50,7 +50,7 @@ what's *written and built but unverified*:
 
 ### Known-broken / stale
 
-- `examples/cedar_decode_test` — fixed in this audit pass; was
+- `examples/cedar_jpeg` — fixed in an earlier audit pass; was
   built against an older `cedar_h264_decode` signature and didn't
   link since the initial commit.
 

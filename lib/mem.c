@@ -15,21 +15,37 @@ void memset32(uint32_t addr, uint32_t val, uint32_t count)
         p[i] = val;
 }
 
+/* Fill whole 32-bit words with `val`. Operates on words only: `bytes`
+ * should be a multiple of 4 — any final (bytes & 3) bytes are NOT
+ * written. Bulk (bytes & ~63) goes through the 64-byte NEON store loop;
+ * the remaining 0-60 bytes are filled by a scalar word loop, so any
+ * word-multiple size (including 0) is exact — no overrun. */
 void memset32_neon(uint32_t addr, uint32_t val, uint32_t bytes)
 {
-    __asm__ volatile(
-        "vdup.32 q0, %[val]          \n"
-        "vmov    q1, q0              \n"
-        "vmov    q2, q0              \n"
-        "vmov    q3, q0              \n"
-        "1:                          \n"
-        "vstm    %[dst]!, {q0-q3}   \n"
-        "subs    %[len], %[len], #64 \n"
-        "bgt     1b                  \n"
-        : [dst] "+r"(addr), [len] "+r"(bytes)
-        : [val] "r"(val)
-        : "q0", "q1", "q2", "q3", "memory"
-    );
+    uint32_t bulk = bytes & ~63u;   /* round down to 64 */
+
+    if (bulk > 0) {
+        __asm__ volatile(
+            "vdup.32 q0, %[val]          \n"
+            "vmov    q1, q0              \n"
+            "vmov    q2, q0              \n"
+            "vmov    q3, q0              \n"
+            "1:                          \n"
+            "vstm    %[dst]!, {q0-q3}   \n"
+            "subs    %[len], %[len], #64 \n"
+            "bgt     1b                  \n"
+            : [dst] "+r"(addr), [len] "+r"(bulk)
+            : [val] "r"(val)
+            : "q0", "q1", "q2", "q3", "memory"
+        );
+        /* addr has been advanced past the bulk by the vstm writeback */
+    }
+
+    /* Scalar tail: 0-60 remaining bytes in whole 4-byte words */
+    volatile uint32_t *p = (volatile uint32_t *)addr;
+    uint32_t words = (bytes & 63u) >> 2;
+    for (uint32_t i = 0; i < words; i++)
+        p[i] = val;
 }
 
 void memcpy_neon(void *dst, const void *src, uint32_t bytes)
@@ -62,4 +78,11 @@ void memcpy_neon(void *dst, const void *src, uint32_t bytes)
     uint32_t words = tail >> 2;
     for (uint32_t i = 0; i < words; i++)
         d32[i] = s32[i];
+
+    /* Byte tail: final (bytes & 3) bytes, so odd sizes copy fully */
+    uint8_t *d8 = (uint8_t *)(d32 + words);
+    const uint8_t *s8 = (const uint8_t *)(s32 + words);
+    uint32_t rem = tail & 3u;
+    for (uint32_t i = 0; i < rem; i++)
+        d8[i] = s8[i];
 }

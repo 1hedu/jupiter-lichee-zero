@@ -69,7 +69,7 @@ SECTIONS
     } > CODE
 
     /* Overflow bss: anything tagged .bss_low lives in the reclaimed
-     * 8MB at 0x40800000. Tag large zero-init arrays with
+     * 14MB BSS_LOW region at 0x40200000. Tag large zero-init arrays with
      * __attribute__((section(".bss_low"))) to move them here. */
     .bss_low (NOLOAD) : {
         __bss_low_start = .;
@@ -84,8 +84,10 @@ SECTIONS
     __irq_stack_top = ORIGIN(CODE) + LENGTH(CODE) - 64K;
     __stack_top     = ORIGIN(CODE) + LENGTH(CODE);
 
-    __fb0_start = ORIGIN(VRAM);
-    __fb1_start = ORIGIN(VRAM) + 0x00200000;  /* FB1 at VRAM+2MB */
+    /* Framebuffer addresses live in include/v3s.h (FB0_ADDR/FB1_ADDR);
+     * no linker symbols needed. (The old __fb1_start here said VRAM+2MB
+     * = 0x43A00000, which contradicted FB1_ADDR 0x43900000 and collided
+     * with SPR_ADDR — both symbols were unreferenced, so removed.) */
 
     /* Satisfy __exidx references from libgcc unwinder (pulled in by
        .fnstart/.fnend in the ARM optimized-routines .S files).

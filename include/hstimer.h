@@ -37,7 +37,7 @@ void hstimer_stop(int timer);
 /* Set raw tick interval (for sub-scanline precision) */
 void hstimer_set_ticks(int timer, uint32_t ticks, int oneshot, void (*callback)(void));
 
-/* One-shot helper: arm timer 0 to fire every `scanlines` lines and refill
+/* Repeating-mode helper: arm timer 0 to fire every `scanlines` lines and refill
  * mix_buf to a high-water mark. Captures the audio_mix_tick boilerplate
  * the cedar_video_av / opn2_hw_live / mt32_rt examples each wrote by
  * hand (cedar_video_av:55-62 was the canonical version). The callback

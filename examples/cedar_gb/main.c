@@ -151,16 +151,14 @@ int main(void)
     uart_puts("x"); uart_putdec(ATLAS_H); uart_puts(")\n");
 
     cedar_argb_to_nv12(atlas, ATLAS_W, ATLAS_W, ATLAS_H);
-    int enc_sz = cedar_h264_encode(ATLAS_W, ATLAS_H, 10, NULL, 0);
+    int enc_sz = cedar_h264_encode(ATLAS_W, ATLAS_H, 10);
     int cedar_ok = 0;
     if (enc_sz > 0) {
         uart_puts("[main] encoded: "); uart_putdec(enc_sz); uart_puts("B\n");
-        int rc = cedar_h264_decode((const uint8_t *)0x43700000, enc_sz,
-                                   ATLAS_W, ATLAS_H, 36, 10, 0, 0, 1);
+        int rc = cedar_h264_decode((const uint8_t *)cedar_enc_stream_addr(),
+                                   enc_sz, ATLAS_W, ATLAS_H, 36, 10, 0, 0, 1);
         if (rc == 0) {
-            uint32_t dsz = ATLAS_W * ATLAS_H;
-            dcache_invalidate_range(0x43100000, dsz);
-            dcache_invalidate_range(0x43200000, dsz / 2);
+            /* decode invalidates its output buffers internally */
             cedar_nv12_to_argb(atlas, ATLAS_W, ATLAS_W, ATLAS_H);
             cedar_ok = 1;
             uart_puts("[main] cedar round-trip OK\n");

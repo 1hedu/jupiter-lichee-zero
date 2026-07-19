@@ -2,6 +2,7 @@
  * Jupiter SDK — Game Boy / Game Boy Color PPU renderer
  * 160×144, 2bpp tiles, 40 sprites (10/line), GBC per-tile palettes.
  */
+#include <stddef.h>
 #include "gb.h"
 #include "jupiter.h"
 
@@ -58,16 +59,46 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
 {
     if (!oam || !chr || !pal || num == 0) return;
 
+    if (num > GB_MAX_SPRITES) num = GB_MAX_SPRITES;
+
+    /* Per-scanline sprite limit: allot the 10 slots in forward OAM order
+     * (low index = high priority), since the render loop below runs in
+     * reverse and a live counter there would keep the wrong sprites.
+     * Lines at/beyond the native height have no limit. */
     uint8_t line_count[GB_NATIVE_H];
+    uint16_t row_allowed[GB_MAX_SPRITES];  /* bit py = row may render */
     for (uint32_t i = 0; i < GB_NATIVE_H; i++) line_count[i] = 0;
 
-    /* Build BG opacity for behind-priority sprites */
-    static uint8_t bg_opaque[GB_NATIVE_W * GB_NATIVE_H];
+    for (uint32_t s = 0; s < num; s++) {
+        int sy = (int)oam[s].y - 16;
+        uint16_t mask = 0;
+        for (int py = 0; py < 8; py++) {
+            int screen_y = sy + py;
+            if (screen_y < 0 || screen_y >= (int)rh) continue;
+            if (screen_y < GB_NATIVE_H) {
+                if (line_count[screen_y] >= GB_SPRITES_PER_LINE) continue;
+                line_count[screen_y]++;
+            }
+            mask |= (uint16_t)(1u << py);
+        }
+        row_allowed[s] = mask;
+    }
+
+    /* Build BG opacity for behind-priority sprites.
+     * Buffer is sized for the largest render rect (the full LCD); clamp
+     * the tracked region to LCD_W×LCD_H so a larger caller framebuffer
+     * cannot overflow it. When the BG pass doesn't run, keep bg_opaque
+     * NULL (nothing opaque) instead of reusing a stale previous frame. */
+    static uint8_t bg_opaque_buf[LCD_W * LCD_H];
+    uint32_t opq_w = rw < LCD_W ? rw : LCD_W;
+    uint32_t opq_h = rh < LCD_H ? rh : LCD_H;
+    const uint8_t *bg_opaque = NULL;
     if (bg && bg->enabled && bg->chr && bg->map) {
-        for (uint32_t sy = 0; sy < rh; sy++) {
+        bg_opaque = bg_opaque_buf;
+        for (uint32_t sy = 0; sy < opq_h; sy++) {
             uint32_t wy = ((uint32_t)((int32_t)sy + bg->scroll_y)) & 0xFF;
             uint32_t tr = wy / 8, fy = wy & 7;
-            for (uint32_t sx = 0; sx < rw; sx++) {
+            for (uint32_t sx = 0; sx < opq_w; sx++) {
                 uint32_t wx = ((uint32_t)((int32_t)sx + bg->scroll_x)) & 0xFF;
                 uint32_t tc = wx / 8, fx = wx & 7;
                 uint32_t mi = (tr & 31) * GB_MAP_W + (tc & 31);
@@ -79,7 +110,7 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
                 }
                 int afy = vf ? 7-(int)fy : (int)fy;
                 int afx = hf ? 7-(int)fx : (int)fx;
-                bg_opaque[sy * rw + sx] = chr_pixel(bg->chr + tidx*16, afy, afx) != 0;
+                bg_opaque_buf[sy * opq_w + sx] = chr_pixel(bg->chr + tidx*16, afy, afx) != 0;
             }
         }
     }
@@ -99,10 +130,9 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
         for (int py = 0; py < 8; py++) {
             int screen_y = sy + py;
             if (screen_y < 0 || screen_y >= (int)rh) continue;
-            if (line_count[screen_y] >= GB_SPRITES_PER_LINE) continue;
+            if (!(row_allowed[s] & (1u << py))) continue;
 
             int tr = vflip ? (7 - py) : py;
-            int drew = 0;
 
             for (int px = 0; px < 8; px++) {
                 int screen_x = sx + px;
@@ -112,12 +142,12 @@ static void render_sprites(uint32_t *ovl, uint32_t pitch,
                 uint8_t ci = chr_pixel(tile, tr, tc);
                 if (ci == 0) continue;
 
-                if (behind && bg_opaque[screen_y * rw + screen_x]) continue;
+                if (behind && bg_opaque &&
+                    screen_y < (int)opq_h && screen_x < (int)opq_w &&
+                    bg_opaque[screen_y * opq_w + screen_x]) continue;
 
                 ovl[(y0 + screen_y) * pitch + (x0 + screen_x)] = pal[spal * 4 + ci];
-                drew = 1;
             }
-            if (drew) line_count[screen_y]++;
         }
     }
 }

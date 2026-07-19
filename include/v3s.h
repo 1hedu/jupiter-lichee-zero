@@ -4,7 +4,9 @@
 #include <stdint.h>
 
 #define BIT(n)              (1U << (n))
-#define GENMASK(h, l)       (((1U << ((h)-(l)+1)) - 1) << (l))
+/* UB-free for the full 0 <= l <= h <= 31 range (the old
+ * ((1U << (h-l+1)) - 1) << l form shifted by 32 when h=31, l=0). */
+#define GENMASK(h, l)       ((0xFFFFFFFFU >> (31 - (h))) & ~((1U << (l)) - 1U))
 #define REG32(addr)         (*(volatile uint32_t *)(addr))
 
 /* Base addresses (dtsi + datasheet) */

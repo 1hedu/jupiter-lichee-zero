@@ -71,8 +71,10 @@ typedef struct {
 
 /* Initialize GPIO for the specified controller type.
  * Call once at startup. Configures pin direction and pull-ups.
- * Can be called multiple times for different types — pins don't conflict
- * (NES/SNES use PG0-2, Genesis uses PG3+PB0-5, N64 uses PG4). */
+ * Can be called multiple times for different types
+ * (NES/SNES use PF0-PF2, Genesis uses PF0-PF5 + PE1, N64 uses PE20).
+ * NES/SNES + N64 coexist; Genesis is exclusive with NES/SNES
+ * (shares PF0-PF2), so the last init wins for those. */
 void input_init(int type);
 
 /* Poll the controller and return current state.
