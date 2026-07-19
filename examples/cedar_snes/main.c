@@ -119,6 +119,44 @@ static uint8_t bg_chr[256 * 32];
 static uint16_t bg_map[32 * 32];
 static uint32_t bg_palette[128];
 
+/* ---- BG tile builder — cold night snowfield ---- */
+static int bg_tile_n = 1;   /* tile 0 = transparent (backdrop) */
+
+static int hexval(char c) { return c <= '9' ? c - '0' : (c & 0xDF) - 'A' + 10; }
+
+/* Pack one 8x8 tile from 8 strings of hex digits ('0'-'F').
+ * The BG compositor reads 4bpp as packed nibbles (2px/byte,
+ * 4 bytes/row, high nibble = left pixel) — unlike the planar
+ * sprite path. */
+static int bg_tile(const char *rows[8])
+{
+    uint8_t *t = &bg_chr[bg_tile_n * 32];
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 4; c++)
+            t[r * 4 + c] = (uint8_t)((hexval(rows[r][c * 2]) << 4) |
+                                       hexval(rows[r][c * 2 + 1]));
+    return bg_tile_n++;
+}
+
+static int bg_solid(char v)
+{
+    char row[9];
+    for (int i = 0; i < 8; i++) row[i] = v;
+    row[8] = 0;
+    const char *rows[8] = { row, row, row, row, row, row, row, row };
+    return bg_tile(rows);
+}
+
+/* Chunky 4x4-block checkerboard — cell-level dither between bands */
+static int bg_checker(char a, char b)
+{
+    char ra[9], rb[9];
+    for (int i = 0; i < 8; i++) { ra[i] = i < 4 ? a : b; rb[i] = i < 4 ? b : a; }
+    ra[8] = rb[8] = 0;
+    const char *rows[8] = { ra, ra, ra, ra, rb, rb, rb, rb };
+    return bg_tile(rows);
+}
+
 int main(void)
 {
     timer_init();
@@ -180,23 +218,137 @@ int main(void)
     for (int f = 0; f < ANIM_FRAMES; f++) process_frame(f, pal_sz);
     uart_puts("[main] "); uart_putdec(META_TPF); uart_puts(" tiles/frame\n");
 
-    /* ---- BG ---- */
+    /* ---- BG: cold night snowfield (Magitek march) ---- */
     memset(bg_chr, 0, sizeof(bg_chr));
-    for (int r=0;r<8;r++) { bg_chr[32+r*2]=0xFF; bg_chr[32+r*2+1]=0; bg_chr[32+r*2+16]=0; bg_chr[32+r*2+17]=0; }
-    for (int r=0;r<8;r++) {
-        if (r<2) { bg_chr[64+r*2]=0xFF; bg_chr[64+r*2+1]=0xFF; bg_chr[64+r*2+16]=0; bg_chr[64+r*2+17]=0; }
-        else { bg_chr[64+r*2]=0xFF; bg_chr[64+r*2+1]=0; bg_chr[64+r*2+16]=0; bg_chr[64+r*2+17]=0; }
-    }
-    memset(bg_map, 0, sizeof(bg_map));
-    for (int x=0; x<32; x++) {
-        bg_map[24*32+x] = SNES_ENTRY(2,0,0,0,0);
-        for (int y=25;y<32;y++) bg_map[y*32+x] = SNES_ENTRY(1,0,0,0,0);
-    }
     memset(bg_palette, 0, sizeof(bg_palette));
-    bg_palette[0]=0xFF2040A0; bg_palette[1]=0xFF604020; bg_palette[2]=0xFF806040; bg_palette[3]=0xFF40A040;
+    static const uint32_t night_pal[12] = {
+        0xFF10142E,  /* 0  backdrop / transparent — deep indigo */
+        0xFF10142E,  /* 1  sky, deepest indigo                  */
+        0xFF161E3E,  /* 2  sky, indigo                          */
+        0xFF20304E,  /* 3  sky, steel horizon                   */
+        0xFF0A0D1E,  /* 4  mountain silhouette                  */
+        0xFF3A4E6E,  /* 5  snow, darkest (bottom)               */
+        0xFF546E90,  /* 6  snow, dark                           */
+        0xFF7690AE,  /* 7  snow, mid steel blue                 */
+        0xFF9CB6D0,  /* 8  snow, moonlit pale                   */
+        0xFFC8D8EE,  /* 9  snow, pale                           */
+        0xFFF2F8FF,  /* A  moon / snow caps / glints            */
+        0xFF66789A,  /* B  dim star                             */
+    };
+    for (int i = 0; i < 12; i++) bg_palette[i] = night_pal[i];
+
+    /* Solids + chunky dither checkers */
+    int t_sky2 = bg_solid('2'), t_sky3 = bg_solid('3'), t_mtn = bg_solid('4');
+    int t_g9 = bg_solid('9'), t_g8 = bg_solid('8'), t_g7 = bg_solid('7');
+    int t_g6 = bg_solid('6'), t_g5 = bg_solid('5');
+    int t_ck12 = bg_checker('1', '2'), t_ck23 = bg_checker('2', '3');
+    int t_ck49 = bg_checker('4', '9');                 /* mountain base scatter */
+    int t_ck98 = bg_checker('9', '8'), t_ck87 = bg_checker('8', '7');
+    int t_ck76 = bg_checker('7', '6'), t_ck65 = bg_checker('6', '5');
+
+    /* Sparse stars + drifting flakes */
+    int t_star1 = bg_tile((const char *[8]){
+        "11111111", "1111A111", "111AAA11", "1111A111",
+        "11111111", "11111111", "11111111", "11111111" });
+    int t_flk1 = bg_tile((const char *[8]){
+        "11111111", "11111111", "11B11111", "11111111",
+        "11111111", "111111A1", "11111111", "11111111" });
+    int t_flk2 = bg_tile((const char *[8]){
+        "22222222", "22222B22", "22222222", "22222222",
+        "2A222222", "22222222", "22222222", "22222222" });
+    int t_flk3 = bg_tile((const char *[8]){
+        "33333333", "33333333", "333B3333", "33333333",
+        "33333333", "33333A33", "33333333", "33333333" });
+
+    /* Moon quarter — one tile, other quadrants via SNES flip bits */
+    int t_moon = bg_tile((const char *[8]){
+        "00000AAA", "000AAAAA", "00AAAAAA", "0AAAAAAA",
+        "0AAAAAAA", "AAAAAAAA", "AAAAAAAA", "AAAAAAAA" });
+
+    /* Jagged snow-capped mountain ridge */
+    int t_peak = bg_tile((const char *[8]){        /* high tip above ridge */
+        "33333333", "3333A333", "333AA333", "333A4433",
+        "33A44443", "33A44443", "3A444444", "A4444444" });
+    int t_slope = bg_tile((const char *[8]){       /* rises to the right */
+        "3333333A", "333333A4", "33333A44", "3333A444",
+        "333A4444", "33A44444", "3A444444", "A4444444" });
+    int t_plat = bg_tile((const char *[8]){        /* snow-capped plateau */
+        "AAAAAAAA", "44444444", "44444444", "44444444",
+        "44444444", "44444444", "44444444", "44444444" });
+    int t_mtop = bg_tile((const char *[8]){        /* valley snow line */
+        "3A3333A3", "AAAA3AAA", "44444444", "44444444",
+        "44444444", "44444444", "44444444", "44444444" });
+
+    /* Moonlit ground glints */
+    int t_gl9 = bg_tile((const char *[8]){
+        "99999999", "99A99999", "99999999", "99999999",
+        "999999A9", "99999999", "99999999", "99999999" });
+    int t_gl8 = bg_tile((const char *[8]){
+        "88888888", "88888888", "888A8888", "88888888",
+        "88888888", "88888A88", "88888888", "88888888" });
+    int t_gl7 = bg_tile((const char *[8]){
+        "77777777", "77777777", "77777777", "77877777",
+        "77777777", "77777787", "77777777", "77777777" });
+
+    /* ---- Lay out the 32x32 map ---- */
+    memset(bg_map, 0, sizeof(bg_map));
+    #define BGSET(x, y, t) bg_map[(y) * 32 + (x)] = SNES_ENTRY((t), 0, 0, 0, 0)
+    for (int x = 0; x < 32; x++) {
+        /* night sky bands, rows 0-9 (rows 0-2 = backdrop tile 0) */
+        BGSET(x, 3, t_ck12);
+        BGSET(x, 4, t_sky2); BGSET(x, 5, t_sky2);
+        BGSET(x, 6, t_ck23);
+        BGSET(x, 7, t_sky3); BGSET(x, 8, t_sky3); BGSET(x, 9, t_sky3);
+
+        if (x % 9 == 1)  BGSET(x, (x * 3) % 3, t_star1);
+        if (x % 7 == 3)  BGSET(x, 1 + (x % 2), t_flk1);
+        if (x % 6 == 5)  BGSET(x, 4 + (x % 2), t_flk2);
+        if (x % 8 == 6)  BGSET(x, 7 + (x % 3), t_flk3);
+
+        /* jagged two-tier ridge (rows 10-11) over body (rows 12-13) */
+        switch (x % 8) {
+        case 0:  BGSET(x, 10, t_slope); BGSET(x, 11, t_mtn);  break;
+        case 1:  BGSET(x, 10, t_plat);  BGSET(x, 11, t_mtn);
+                 if ((x & 8) == 0) { BGSET(x, 9, t_peak); }
+                 break;
+        case 2:  bg_map[10 * 32 + x] = SNES_ENTRY(t_slope, 0, 0, 1, 0);
+                 BGSET(x, 11, t_mtn);                          break;
+        case 3:  BGSET(x, 10, t_sky3); BGSET(x, 11, t_slope); break;
+        case 4:  BGSET(x, 10, t_sky3); BGSET(x, 11, t_plat);  break;
+        case 5:  BGSET(x, 10, t_sky3);
+                 bg_map[11 * 32 + x] = SNES_ENTRY(t_slope, 0, 0, 1, 0); break;
+        case 6:  BGSET(x, 10, t_sky3); BGSET(x, 11, t_mtop);  break;
+        default: BGSET(x, 10, t_sky3); BGSET(x, 11, t_slope); break;
+        }
+        BGSET(x, 12, t_mtn); BGSET(x, 13, t_mtn);
+
+        /* snowfield falling darker toward the bottom, rows 14-31 */
+        BGSET(x, 14, (x % 5 == 3) ? t_g9 : t_ck49);
+        BGSET(x, 15, (x % 6 == 2) ? t_gl9 : t_g9);
+        BGSET(x, 16, t_ck98);
+        BGSET(x, 17, t_g8);
+        BGSET(x, 18, (x % 7 == 4) ? t_gl8 : t_g8);
+        BGSET(x, 19, t_ck87);
+        BGSET(x, 20, t_g7);
+        BGSET(x, 21, (x % 8 == 5) ? t_gl7 : t_g7);
+        BGSET(x, 22, t_ck76);
+        BGSET(x, 23, t_g6); BGSET(x, 24, t_g6);
+        BGSET(x, 25, t_ck65);
+        for (int y = 26; y < 32; y++) BGSET(x, y, t_g5);
+    }
+
+    /* Moon, upper left — one quarter tile + flips */
+    bg_map[1 * 32 + 5] = SNES_ENTRY(t_moon, 0, 0, 0, 0);
+    bg_map[1 * 32 + 6] = SNES_ENTRY(t_moon, 0, 0, 1, 0);
+    bg_map[2 * 32 + 5] = SNES_ENTRY(t_moon, 0, 0, 0, 1);
+    bg_map[2 * 32 + 6] = SNES_ENTRY(t_moon, 0, 0, 1, 1);
+    #undef BGSET
 
     snes_bg_t bg1 = { .tiles=bg_chr, .map=bg_map, .palette=bg_palette,
         .scroll_x=0, .scroll_y=0, .map_w=32, .map_h=32, .bpp=4, .enabled=1 };
+    /* disabled second layer — mode 1 dereferences both overlay BGs */
+    snes_bg_t bg2 = { .tiles=bg_chr, .map=bg_map, .palette=bg_palette,
+        .scroll_x=0, .scroll_y=0, .map_w=32, .map_h=32, .bpp=4, .enabled=0 };
 
     /* ---- Display ---- */
     video_init();
@@ -259,7 +411,7 @@ int main(void)
         }}
 
         memset((void*)ovl, 0, LCD_FB_BYTES);
-        snes_mode1_render((uint32_t*)fb,(uint32_t*)ovl,LCD_W,LCD_H,bg_palette[0],&bg1,NULL,NULL,1);
+        snes_mode1_render((uint32_t*)fb,(uint32_t*)ovl,LCD_W,LCD_H,bg_palette[0],&bg1,&bg2,NULL,1);
         snes_render_sprites((uint32_t*)ovl,LCD_W,LCD_H,meta_chr,spr_palette,sprites,1,1);
 
         dcache_clean_range(fb_addr, LCD_FB_BYTES);

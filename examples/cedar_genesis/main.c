@@ -210,9 +210,49 @@ static int build_metasprite(genesis_sprite_t *out, int frame,
 }
 
 /* ================================================================== */
-/* Background tilemap                                                   */
+/* Background tilemap — synthwave dusk (palette line 1)                 */
 /* ================================================================== */
 static uint16_t bg_map[64 * 32];
+
+/* Private BG tile bank — plane B carries its own tile pointer, so BG
+ * indices stay small regardless of how many sprite tiles were cut. */
+#define BG_MAX_TILES 64
+static uint8_t bg_tiles[BG_MAX_TILES * 32];
+static int bg_tile_count = 1;   /* tile 0 = transparent (backdrop) */
+
+/* Pack one 8x8 tile from 8 strings of hex digits '0'-'F'.
+ * Genesis 4bpp: 8 rows x 4 bytes, high nibble = left pixel. */
+static int hexval(char c) { return c <= '9' ? c - '0' : (c & 0xDF) - 'A' + 10; }
+
+static int bg_tile(const char *rows[8])
+{
+    if (bg_tile_count >= BG_MAX_TILES) return 0;
+    uint8_t *d = bg_tiles + bg_tile_count * 32;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 4; c++)
+            d[r * 4 + c] = (uint8_t)((hexval(rows[r][c * 2]) << 4) |
+                                       hexval(rows[r][c * 2 + 1]));
+    return bg_tile_count++;
+}
+
+static int bg_solid(char v)
+{
+    char row[9];
+    for (int i = 0; i < 8; i++) row[i] = v;
+    row[8] = 0;
+    const char *rows[8] = { row, row, row, row, row, row, row, row };
+    return bg_tile(rows);
+}
+
+/* Chunky 4x4-block checkerboard of two shades — cell-level dither */
+static int bg_checker(char a, char b)
+{
+    char ra[9], rb[9];
+    for (int i = 0; i < 8; i++) { ra[i] = i < 4 ? a : b; rb[i] = i < 4 ? b : a; }
+    ra[8] = rb[8] = 0;
+    const char *rows[8] = { ra, ra, ra, ra, rb, rb, rb, rb };
+    return bg_tile(rows);
+}
 
 int main(void)
 {
@@ -326,28 +366,157 @@ int main(void)
     /* ---- Setup Genesis VDP ---- */
     video_init();
 
-    /* Background */
-    uint32_t bg_color = 0xFF1A1A3A;
-    cram[16] = bg_color;
-    cram[17] = 0xFF2A2A5A;
+    /* Backdrop + BG palette line 1 (cram[16..31]) — synthwave dusk */
+    uint32_t bg_color = 0xFF141030;              /* deep violet-navy sky */
+    static const uint32_t bg_pal[16] = {
+        0xFF141030,  /* 0  transparent slot (= backdrop) */
+        0xFF141030,  /* 1  sky, deepest violet-navy      */
+        0xFF201646,  /* 2  sky violet                    */
+        0xFF2E1E5C,  /* 3  sky lighter violet            */
+        0xFF3E2670,  /* 4  dusk violet                   */
+        0xFF612B82,  /* 5  dusk magenta-purple           */
+        0xFF9C3390,  /* 6  glow magenta                  */
+        0xFFE0518C,  /* 7  glow hot pink                 */
+        0xFFFF8A50,  /* 8  glow orange                   */
+        0xFFFFD08A,  /* 9  sun, pale gold                */
+        0xFF0C081E,  /* A  city silhouette               */
+        0xFF07060F,  /* B  grid floor near-black         */
+        0xFF00E0D0,  /* C  neon cyan                     */
+        0xFFFF37B8,  /* D  neon magenta                  */
+        0xFFB8F4FF,  /* E  star bright                   */
+        0xFF56508C,  /* F  star dim / far grid           */
+    };
+    for (int i = 0; i < 16; i++) cram[16 + i] = bg_pal[i];
 
-    /* Floor tile */
-    {
-        uint8_t *d = tiledata + tile_count * 32;
-        for (int r = 0; r < 8; r++)
-            for (int c = 0; c < 4; c++)
-                d[r*4+c] = (r < 2) ? 0x11 : 0x00;
-        int floor_tile = tile_count++;
+    /* ---- Build BG tiles ---- */
+    int t_sky2 = bg_solid('2'), t_sky3 = bg_solid('3');
+    int t_sky4 = bg_solid('4'), t_sky5 = bg_solid('5');
+    int t_ck12 = bg_checker('1', '2'), t_ck23 = bg_checker('2', '3');
+    int t_ck34 = bg_checker('3', '4'), t_ck45 = bg_checker('4', '5');
+    int t_sil  = bg_solid('A'), t_sun = bg_solid('9');
+    int t_gap  = bg_solid('8');
 
-        memset(bg_map, 0, sizeof(bg_map));
-        for (int y = 0; y < 28; y++)
-            for (int x = 0; x < 40; x++)
-                if (y >= 22)
-                    bg_map[y * 64 + x] = GEN_ENTRY(floor_tile, 1, 0, 0);
+    int t_star1 = bg_tile((const char *[8]){    /* bright star on sky 1 */
+        "11111111", "11111111", "111E1111", "11EEE111",
+        "111E1111", "11111111", "11111111", "11111111" });
+    int t_star2 = bg_tile((const char *[8]){    /* dim twinkle on sky 2 */
+        "22222222", "22222F22", "22222222", "22222222",
+        "22F22222", "22222222", "22222222", "22222222" });
+    int t_star3 = bg_tile((const char *[8]){    /* dim twinkle on sky 3 */
+        "33333333", "33333333", "33333333", "333F3333",
+        "33333333", "33333333", "33333F33", "33333333" });
+
+    /* Sunset glow band — chunky 2px horizontal dither stripes */
+    int t_gl56 = bg_tile((const char *[8]){
+        "55555555", "55555555", "66666666", "55555555",
+        "66666666", "66666666", "55555555", "66666666" });
+    int t_gl67 = bg_tile((const char *[8]){
+        "66666666", "66666666", "77777777", "66666666",
+        "77777777", "77777777", "66666666", "77777777" });
+    int t_gl78 = bg_tile((const char *[8]){
+        "77777777", "77777777", "88888888", "77777777",
+        "88888888", "88888888", "77777777", "88888888" });
+
+    /* Sun slit tiles — horizontal cuts through the low sun */
+    int t_sun_a = bg_tile((const char *[8]){
+        "99999999", "99999999", "99999999", "99999999",
+        "99999999", "77777777", "99999999", "99999999" });
+    int t_sun_b = bg_tile((const char *[8]){
+        "99999999", "99999999", "88888888", "99999999",
+        "99999999", "88888888", "88888888", "99999999" });
+
+    /* City skyline rooftops against the orange glow */
+    int t_roof_hi = bg_tile((const char *[8]){
+        "88888888", "AAAAAA88", "AAAAAA88", "AAAAAA88",
+        "AAAAAAAA", "AAAAAAAA", "AAAAAAAA", "AAAAAAAA" });
+    int t_roof_md = bg_tile((const char *[8]){
+        "88888888", "88888888", "88888888", "88AAAAAA",
+        "88AAAAAA", "AAAAAAAA", "AAAAAAAA", "AAAAAAAA" });
+    int t_roof_lo = bg_tile((const char *[8]){
+        "88888888", "88888888", "88888888", "88888888",
+        "88888888", "88888888", "AAAAAAAA", "AAAAAAAA" });
+    int t_roof_ant = bg_tile((const char *[8]){    /* antenna spire */
+        "888A8888", "888A8888", "88AAA888", "888A8888",
+        "888A8888", "8AAAAA88", "AAAAAAAA", "AAAAAAAA" });
+    int t_win = bg_tile((const char *[8]){         /* lit windows */
+        "AAAAAAAA", "AA8AAAAA", "AAAAAAAA", "AAAAACAA",
+        "AAAAAAAA", "A8AAAAAA", "AAAAAAAA", "AAAAAAAA" });
+
+    /* Neon wireframe grid floor — 3 depth bands fake the convergence */
+    int t_grid_far = bg_tile((const char *[8]){    /* 4px cells, dim */
+        "CCCCCCCC", "FBBBFBBB", "FBBBFBBB", "FBBBFBBB",
+        "FFFFFFFF", "FBBBFBBB", "FBBBFBBB", "FBBBFBBB" });
+    int t_grid_mid = bg_tile((const char *[8]){    /* 8px cells, dim verts */
+        "CCCCCCCC", "FBBBBBBB", "FBBBBBBB", "FBBBBBBB",
+        "FBBBBBBB", "FBBBBBBB", "FBBBBBBB", "FBBBBBBB" });
+    int t_near_tl = bg_tile((const char *[8]){     /* 16px cells, 1px lines */
+        "CCCCCCCC", "DBBBBBBB", "DBBBBBBB", "DBBBBBBB",
+        "DBBBBBBB", "DBBBBBBB", "DBBBBBBB", "DBBBBBBB" });
+    int t_near_tr = bg_tile((const char *[8]){
+        "CCCCCCCC", "BBBBBBBB", "BBBBBBBB", "BBBBBBBB",
+        "BBBBBBBB", "BBBBBBBB", "BBBBBBBB", "BBBBBBBB" });
+    int t_near_bl = bg_tile((const char *[8]){
+        "DBBBBBBB", "DBBBBBBB", "DBBBBBBB", "DBBBBBBB",
+        "DBBBBBBB", "DBBBBBBB", "DBBBBBBB", "DBBBBBBB" });
+    int t_floor = bg_solid('B');
+
+    /* ---- Lay out the map (64 cols so scrolling stays safe) ---- */
+    memset(bg_map, 0, sizeof(bg_map));
+    #define BGSET(x, y, t) bg_map[(y) * 64 + (x)] = GEN_ENTRY((t), 1, 0, 0)
+    for (int x = 0; x < 64; x++) {
+        /* sky bands with cell-dither transitions (rows 0-13) */
+        for (int y = 0; y <= 2; y++) BGSET(x, y, 0);   /* backdrop */
+        BGSET(x, 3, t_ck12);
+        BGSET(x, 4, t_sky2); BGSET(x, 5, t_sky2);
+        BGSET(x, 6, t_ck23);
+        BGSET(x, 7, t_sky3); BGSET(x, 8, t_sky3);
+        BGSET(x, 9, t_ck34);
+        BGSET(x, 10, t_sky4); BGSET(x, 11, t_sky4);
+        BGSET(x, 12, t_ck45);
+        BGSET(x, 13, t_sky5);
+
+        /* sparse stars, deterministic scatter */
+        if (x % 9 == 2)  BGSET(x, (x * 5 % 3), t_star1);
+        if (x % 7 == 4)  BGSET(x, 4 + (x % 2), t_star2);
+        if (x % 11 == 6) BGSET(x, 7 + (x % 2), t_star3);
+
+        /* sunset glow stripes (rows 14-16) */
+        BGSET(x, 14, t_gl56);
+        BGSET(x, 15, t_gl67);
+        BGSET(x, 16, t_gl78);
+
+        /* skyline (rows 17-18) */
+        switch ((x * 7 + 3) % 5) {
+        case 0:  BGSET(x, 17, t_roof_hi);  break;
+        case 1:  BGSET(x, 17, t_roof_lo);  break;
+        case 2:  BGSET(x, 17, t_roof_md);  break;
+        case 3:  BGSET(x, 17, (x % 3) ? t_roof_md : t_roof_ant); break;
+        default: BGSET(x, 17, (x % 4) ? t_roof_hi : t_gap); break;
+        }
+        BGSET(x, 18, (x % 5 == 1) ? t_win : t_sil);
+
+        /* neon grid floor (rows 19-27, feet stay on row 22) */
+        BGSET(x, 19, t_grid_far);
+        BGSET(x, 20, t_grid_mid);
+        BGSET(x, 21, t_grid_mid);
+        for (int y = 22; y < 32; y++) {
+            int top  = ((y - 22) & 1) == 0;
+            int left = (x & 1) == 0;
+            BGSET(x, y, top ? (left ? t_near_tl : t_near_tr)
+                            : (left ? t_near_bl : t_floor));
+        }
     }
 
+    /* Low stepped sun sitting on the skyline, left third of the screen */
+    for (int x = 9;  x <= 10; x++) BGSET(x, 12, t_sun);
+    for (int x = 8;  x <= 11; x++) BGSET(x, 13, t_sun);
+    for (int x = 7;  x <= 12; x++) BGSET(x, 14, t_sun);
+    for (int x = 7;  x <= 12; x++) BGSET(x, 15, t_sun_a);
+    for (int x = 7;  x <= 12; x++) BGSET(x, 16, t_sun_b);
+    #undef BGSET
+
     genesis_plane_t plane_b = {
-        .tiles = tiledata, .map = bg_map, .cram = cram,
+        .tiles = bg_tiles, .map = bg_map, .cram = cram,
         .scroll_x = 0, .scroll_y = 0, .line_hscroll = NULL,
         .map_w = 64, .map_h = 32, .enabled = 1,
     };
