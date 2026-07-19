@@ -390,8 +390,15 @@ build/mt32/math_neon/%.o: third_party/math_neon/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Ofast -I third_party/math_neon -c $< -o $@
 
+# Nuked-SC55 source prep: inject the MCU_SetSampleCallback hook the
+# bare-metal driver needs (idempotent; see scripts/prepare_sc55.py).
+build/sc55/.prepared: scripts/prepare_sc55.py
+	@mkdir -p build/sc55
+	python scripts/prepare_sc55.py
+	@touch $@
+
 # Nuked-SC55 C++ compile rules
-build/sc55/%.o: $(SC55_SRC_DIR)/%.cpp
+build/sc55/%.o: $(SC55_SRC_DIR)/%.cpp build/sc55/.prepared
 	@mkdir -p $(dir $@)
 	$(CXX) $(SC55_CXX_FLAGS) -c $< -o $@
 

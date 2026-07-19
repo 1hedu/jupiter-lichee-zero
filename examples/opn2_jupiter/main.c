@@ -37,7 +37,11 @@ extern volatile uint32_t mix_rd;
 #define RECORDED_SECS   60
 #define RECORDED_FRAMES (OUT_RATE * RECORDED_SECS)
 
-static int16_t recorded[RECORDED_FRAMES * 2];
+/* 11.5 MB capture buffer — lives in the BSS_LOW region so the menu
+ * build's combined bss stays inside the 40 MB CODE budget (see
+ * LIMITATIONS.md "CODE region is 40 MB"). */
+static int16_t __attribute__((section(".bss_low")))
+recorded[RECORDED_FRAMES * 2];
 static volatile uint32_t recorded_pos;
 static volatile uint32_t play_pos;
 

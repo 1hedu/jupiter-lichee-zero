@@ -8,3 +8,6 @@
 [submodule "third_party/nuked_sc55"]
 	path = third_party/nuked_sc55
 	url = https://github.com/nukeykt/Nuked-SC55.git
+	# The build injects the MCU_SetSampleCallback hook into mcu.cpp
+	# (build/sc55/.prepared rule) — expected dirt, keep status clean.
+	ignore = dirty
