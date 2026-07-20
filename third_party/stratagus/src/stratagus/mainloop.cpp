@@ -322,20 +322,23 @@ static void GameLogicLoop()
 		// Check game goals.
 		// Check rescue of units.
 		//
-		/* C1 sweep: tear down widget subtrees of menus that are neither
-		 * the Gui top nor anywhere on MenuStack, then evict orphaned
-		 * JupiterImage cache entries (the ~1.2 MB-per-briefing ARGB
-		 * buffers). Safe now: guisan's FocusHandler::remove clears ALL
-		 * of its tracking pointers (the original returned after the
-		 * first match, leaving e.g. mLastWidgetPressed dangling → the
-		 * historical hang on next cursor move), including the two modal
-		 * pointers no destructor path cleared. ~Widget reaches it via
-		 * _setFocusHandler(nullptr) for every widget the sweep deletes.
-		 * The briefing path registers no ContainerListeners or death
-		 * listeners, and LuaActionListeners are intentionally immortal
-		 * (see war1_widgets.cpp), so the focus pointers were the only
-		 * live cross-reference class. */
+		/* C1 sweep RE-DISABLED after a bench freeze in the first game
+		 * cycles of a mission — a silent hang with no UART output,
+		 * which is exactly what a corrupted teardown walk looks like
+		 * (see the Widget::~Widget comment about mWidgetInstances
+		 * infinite loops). The FocusHandler::remove fix (clear ALL
+		 * tracking pointers) is real and stays — it removes one class
+		 * of dangling pointer — but it was NOT sufficient: the original
+		 * author's warning here said "re-enable only after a proper
+		 * atomic teardown is wired (menu_lifetime_diagnosis.md §C1)"
+		 * and that judgment stands. The briefing widget leak
+		 * (~1.2 MB/briefing) returns until that teardown exists.
+		 * Define WAR1_ENABLE_SUBTREE_SWEEP to re-enable for bench
+		 * iteration on the teardown itself — the sweep now logs each
+		 * menu address BEFORE deleting, so a hang names its culprit. */
+#ifdef WAR1_ENABLE_SUBTREE_SWEEP
 		war1_menu_subtree_sweep();
+#endif
 		switch (GameCycle % CYCLES_PER_SECOND) {
 			case 0: // At cycle 0, start all ai players...
 				if (GameCycle == 0) {
