@@ -78,6 +78,18 @@ void n64_send_byte(uint8_t b)
 
 int n64_recv_bit(void)
 {
+    /* The line must be idle-HIGH before we arm the falling-edge wait.
+     * We get here ~2 µs after releasing our own stop bit; on a long
+     * cable the pull-up may not have finished rising yet, and treating
+     * that residue as the controller's start edge samples a phantom
+     * '1' into bit 7 of byte 0 — which is the A button. (Symptom on
+     * the bench: anything reading input_pressed() sees a spurious A
+     * edge on the first poll after boot.) Bounded wait: 10 µs. */
+    uint32_t t_h = pmu_cycles();
+    while (!pe_read(N64_DATA)) {
+        if ((pmu_cycles() - t_h) > 12000) return -1;
+    }
+
     /* Wrap-safe: delta-since-start, not absolute target. */
     uint32_t t_w = pmu_cycles();
     while (pe_read(N64_DATA)) {
@@ -106,6 +118,13 @@ int n64_recv_byte(uint8_t *out)
     n64_dbg_bits_got = 0;
     uint32_t t_byte_start = pmu_cycles();
     for (int i = 7; i >= 0; i--) {
+        /* Same idle-HIGH guard as n64_recv_bit: never mistake the tail
+         * of our own (or the previous bit's) low phase for a new start
+         * edge. */
+        uint32_t t_h = pmu_cycles();
+        while (!(PE_DAT & N64_DATA)) {
+            if ((pmu_cycles() - t_h) > 12000) return -1;
+        }
         /* Wrap-safe timeout: subtract first, compare delta. The previous
          * `pmu_cycles() > start + N` form breaks on uint32_t wrap every
          * 3.6 s and could spin forever in that window. */

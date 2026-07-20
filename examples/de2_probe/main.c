@@ -255,6 +255,7 @@ int main(void)
     }
 
     draw_key_pattern();
+    input_settle();   /* a phantom first-poll A would skip config 0 */
 
     int phase = -1, want = 0;
     uint32_t frame = 0, held_prev = 0;

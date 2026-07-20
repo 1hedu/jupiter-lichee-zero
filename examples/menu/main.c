@@ -360,11 +360,17 @@ int main(void)
 
     menu_render(fb, sel, scroll);
 
+    /* Boot input grace: the first polls after power-on can carry
+     * garbage (controller cold-start, joybus line still settling), and
+     * a single phantom A edge here would instantly launch the top
+     * entry. Wait for a clean all-released baseline before acting. */
+    input_settle();
+
     while (1) {
         uint32_t t0 = timer_read();
 
         input_poll();
-        uint16_t pressed = input_pressed();
+        uint32_t pressed = input_pressed();
         int changed = 0;
 
         if (pressed & BTN_DOWN) {

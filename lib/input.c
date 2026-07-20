@@ -374,3 +374,18 @@ input_state_t input_poll(void)
 uint32_t input_pressed(void)  { return curr_buttons & ~prev_buttons; }
 uint32_t input_released(void) { return ~curr_buttons & prev_buttons; }
 uint32_t input_held(void)     { return curr_buttons; }
+
+void input_settle(void)
+{
+    /* Cold-start reads can carry garbage (pad still initializing, line
+     * settling) and a phantom edge on the first real poll fires
+     * whatever the caller bound to A. Poll until the pad reports
+     * all-released on 5 consecutive reads; bounded so a genuinely held
+     * button (or stuck line) can't wedge boot for more than ~1 s. */
+    int clean = 0;
+    for (int i = 0; i < 60 && clean < 5; i++) {
+        input_state_t st = input_poll();
+        clean = (st.buttons == 0) ? clean + 1 : 0;
+        delay_us(16000);
+    }
+}

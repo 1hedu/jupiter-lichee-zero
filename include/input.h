@@ -94,4 +94,10 @@ uint32_t input_pressed(void);    /* buttons pressed THIS frame */
 uint32_t input_released(void);   /* buttons released THIS frame */
 uint32_t input_held(void);       /* buttons held (current state) */
 
+/* Discard boot-time garbage: blocks until the pad reports all buttons
+ * released for 5 consecutive polls (bounded at ~1 s). Call once after
+ * input_init() and before acting on input_pressed() edges — protects
+ * against phantom presses from controller cold-start. */
+void input_settle(void);
+
 #endif /* INPUT_H */

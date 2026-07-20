@@ -295,6 +295,7 @@ int main(void)
     #define PIP_H 64
 
     irq_global_enable();
+    input_settle();   /* no phantom first-poll edge skipping phase 0 */
 
     int phase = -1, want = 0;
     uint32_t frame = 0, pf = 0;
