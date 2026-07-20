@@ -223,6 +223,19 @@
 #define CSC1_BASE           (MIXER0_BASE + 0xFA050)
 #define CSC_CTRL(base)      REG32((base) + 0x00)
 #define CSC_COEFF(base,i)   REG32((base) + 0x10 + 4*(i))
+
+/* VI-channel video-enhancement sub-engines (VEP). Their cold-boot
+ * state is UNDEFINED and they sit in the YUV path — Linux zeroes all
+ * of them at probe (sun8i_mixer.c "disable unused sub-engines"). RGB
+ * scanout bypasses them, which is why RGB always worked while a
+ * random-enabled FCC (color "correction") mangles NV12 into garbage. */
+#define VEP_FCE_EN          REG32(MIXER0_BASE + 0xA0000)
+#define VEP_BWS_EN          REG32(MIXER0_BASE + 0xA2000)
+#define VEP_LTI_EN          REG32(MIXER0_BASE + 0xA4000)
+#define VEP_PEAK_EN         REG32(MIXER0_BASE + 0xA6000)
+#define VEP_ASE_EN          REG32(MIXER0_BASE + 0xA8000)
+#define VEP_FCC_EN          REG32(MIXER0_BASE + 0xAA000)
+#define VEP_DCSC_EN         REG32(MIXER0_BASE + 0xB0000)
 #define CSC_EN              BIT(0)
 
 /* Backward compat — existing code uses VI_xxx for VI0 */
@@ -256,6 +269,15 @@
 #define UI_FMT_RGB888       (8U << 8)
 #define UI_FMT_RGB565       (10U << 8)
 #define UI_GALPHA(a)        (((a) & 0xFF) << 24)
+/* Alpha mode, UI_ATTR bits [2:1] (Linux sun8i_ui_layer.h): selects how
+ * the GALPHA byte combines with per-pixel alpha. PIXEL (the reset
+ * value) IGNORES the global alpha byte entirely — writes to GALPHA do
+ * nothing unless one of the other modes is selected. COMBINED
+ * multiplies pixel × global, which with GALPHA=0xFF is identical to
+ * PIXEL — so it's the safe always-on choice. */
+#define UI_AMODE_PIXEL      (0U << 1)
+#define UI_AMODE_LAYER      (1U << 1)   /* global alpha only */
+#define UI_AMODE_COMBINED   (2U << 1)   /* pixel × global    */
 
 /* Size helper (for MIX_GLB_SIZE, BLD_OUT_SIZE, BLD_INSIZE, UI_SIZE) */
 #define WH(w,h)             ((((h)-1) << 16) | ((w)-1))

@@ -58,8 +58,25 @@ static void de2_init(void)
     VI_TOP_LADDR0(0) = FB0_ADDR;
     VI_OVL_SIZE(0)   = WH(LCD_W, LCD_H);
 
-    /* UI0 — overlay (per-pixel alpha) */
-    UI_ATTR(0)  = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(0xFF);
+    /* VI-channel enhancement sub-engines: cold-boot state is undefined
+     * and they mangle the YUV path (a random-enabled FCC turns NV12
+     * into solid wrong-color output). Linux zeroes them at probe; so
+     * do we. RGB scanout bypasses them, which is why this was only
+     * visible the first time Mode 4 ran on silicon. */
+    VEP_FCE_EN  = 0;
+    VEP_BWS_EN  = 0;
+    VEP_LTI_EN  = 0;
+    VEP_PEAK_EN = 0;
+    VEP_ASE_EN  = 0;
+    VEP_FCC_EN  = 0;
+    VEP_DCSC_EN = 0;
+
+    /* UI0 — overlay. COMBINED alpha mode = per-pixel × global; with
+     * GALPHA=0xFF that's identical to plain per-pixel alpha, but it
+     * makes the global byte LIVE — the reset-default PIXEL mode
+     * silently ignores GALPHA writes (why Mode 3 GHOST and the Mode 6
+     * raster strobe did nothing on first silicon pass). */
+    UI_ATTR(0)  = UI_EN | UI_FMT_ARGB8888 | UI_AMODE_COMBINED | UI_GALPHA(0xFF);
     UI_SIZE(0)  = WH(LCD_W, LCD_H);
     UI_COORD(0) = 0;
     UI_PITCH(0) = LCD_PITCH;
@@ -293,7 +310,7 @@ void video_mode(int mode)
         BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
         break;
     default: /* 1 / 3 / 6 / 7: the standard VI0 + UI0 stack */
-        UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(0xFF);
+        UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_AMODE_COMBINED | UI_GALPHA(0xFF);
         BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 2);
         BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_FC(0);
         break;
@@ -305,7 +322,7 @@ void video_mode(int mode)
  * 255=opaque). Per-pixel alpha still applies on top of this. */
 void video_mode3_alpha(uint8_t alpha)
 {
-    UI_ATTR(0) = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(alpha);
+    UI_ATTR(0) = UI_EN | UI_FMT_ARGB8888 | UI_AMODE_COMBINED | UI_GALPHA(alpha);
     MIX_GLB_DBUF = DBUF_EN;
 }
 
@@ -392,7 +409,7 @@ void video_mode5_split(uint32_t fb_top, uint32_t fb_bottom)
     BLD_OFFSET(1)     = ((LCD_H / 2) << 16) | 0;   /* plain (y<<16)|x */
     BLD_MODE(1)       = BLEND_DEF;
 
-    UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(0xFF);
+    UI_ATTR(0)   = UI_EN | UI_FMT_ARGB8888 | UI_AMODE_COMBINED | UI_GALPHA(0xFF);
     BLD_INSIZE(2) = WH(LCD_W, LCD_H);
     BLD_OFFSET(2) = 0;
     BLD_MODE(2)   = BLEND_DEF;
@@ -457,6 +474,14 @@ void video_mode7_line_reset(uint32_t base_addr)
 {
     m7_base = base_addr;
     m7_line = 0;
+    /* Re-arm the timer so its period restarts NOW (at vblank). Without
+     * this the hstimer free-runs against the raster — the band
+     * boundaries drift through the frame and the shear crawls instead
+     * of holding a stable wave (bench: "mode 7 not smooth at all").
+     * Re-arming every frame phase-locks band 0 to the frame top. */
+    if (m7_offs)
+        hstimer_set_ticks(1, m7_step * HSTIMER_TICKS_PER_SCANLINE, 0,
+                          video_mode7_isr);
 }
 
 void video_mode7_lineshift_off(void)

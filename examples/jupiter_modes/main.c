@@ -178,7 +178,7 @@ static void raster_isr(void)
     raster_band++;
     /* alternate opaque / half-ghost overlay every 16 scanlines */
     uint32_t a = (raster_band & 1) ? 0x60 : 0xFF;
-    UI_ATTR(0) = UI_EN | UI_FMT_ARGB8888 | UI_GALPHA(a);
+    UI_ATTR(0) = UI_EN | UI_FMT_ARGB8888 | UI_AMODE_COMBINED | UI_GALPHA(a);
     REG32(0x01100000 + 0x08) = 1;   /* GLB_DBUFF: latch mid-frame */
 }
 
@@ -425,6 +425,12 @@ int main(void)
         video_wait_vblank();
         if (m == 7)
             video_mode7_line_reset(FB0_ADDR);
+        if (m == 6) {
+            /* Phase-lock the blinds: restart the strobe period at
+             * vblank so the bands hold still instead of crawling. */
+            raster_band = 0;
+            hstimer_set_repeating(0, 16, raster_isr);
+        }
     }
     return 0;
 }
