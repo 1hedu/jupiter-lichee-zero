@@ -240,6 +240,21 @@ VGM_SRCS = libvgm/vgm_player.c libvgm/emu/cores/np_nes_apu.c \
 # Game source (override with GAME=path/to/main.c)
 GAME ?= template/game.c
 
+# ---- GAME-change detection ----
+# build/jupiter.elf lists $(GAME) as a prerequisite, but make can't know
+# which GAME an EXISTING elf was linked from. Without this stamp,
+# switching GAME after a successful build finds every prerequisite older
+# than the elf and relinks NOTHING — build/jupiter.bin silently stays
+# the PREVIOUS game, and that's what gets flashed. (Bench symptom:
+# "the menu boots straight into the last demo I built".) The stamp file
+# is rewritten only when GAME differs from the recorded one, so its
+# mtime bump forces a relink exactly when needed.
+GAME_STAMP := build/.game_stamp
+ifneq ($(strip $(shell cat $(GAME_STAMP) 2>/dev/null)),$(strip $(GAME)))
+  $(shell mkdir -p build)
+  $(file >$(GAME_STAMP),$(GAME))
+endif
+
 # Menu build: auto-include wrapper files for combined example binary
 ifneq (,$(findstring menu,$(GAME)))
   MENU_SRCS := $(wildcard examples/menu/ex_*.c)
@@ -535,8 +550,11 @@ examples/war1/war1_script_catalog.h: scripts/war1_embed_lua.py $(WAR1_LUA_SCRIPT
 # script manually — we don't wire it to a generic build dep because it
 # needs the data.War1gus path passed in.
 
-$(TARGET).elf: $(MT32_EXTRA_DEPS) $(WAR1_EXTRA_DEPS) $(ASM_SRCS) $(ARM_OPT_SRCS) $(LIB_SRCS) $(VGM_SRCS) $(NE10_SRCS) $(FATFS_OBJS) $(MT32_OBJS) $(SC55_OBJS) $(WAR1_OBJS) $(ASSET_OBJS) $(GAME) $(LDSCRIPT)
+$(TARGET).elf: $(MT32_EXTRA_DEPS) $(WAR1_EXTRA_DEPS) $(ASM_SRCS) $(ARM_OPT_SRCS) $(LIB_SRCS) $(VGM_SRCS) $(NE10_SRCS) $(FATFS_OBJS) $(MT32_OBJS) $(SC55_OBJS) $(WAR1_OBJS) $(ASSET_OBJS) $(GAME) $(LDSCRIPT) $(GAME_STAMP)
 	@mkdir -p build
+	@# Remove stale outputs first: if this link fails, no old elf/bin can
+	@# linger to be flashed by mistake.
+	@rm -f $(TARGET).elf $(TARGET).bin
 	@# Windows CreateProcess caps argv at ~32 KB; with guisan added the link
 	@# command exceeds it. Use GNU make's $(file) to write a response file
 	@# (no shell involved, no length limit), then pass via @file to gcc.
