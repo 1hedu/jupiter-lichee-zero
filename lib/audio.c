@@ -413,11 +413,24 @@ void audio_dma_isr(void)
      * write mix_buf directly, and injecting audio_mix's silence into
      * their stream would turn a late frame into a guaranteed gap. */
     {
+        /* LOW-WATER gate, not headroom: mix from the ISR only when the
+         * ring is close to underrun (a stalled main loop — level load,
+         * Lua click handler, SD track switch). The first version of
+         * this guard topped up whenever there was ROOM for a half
+         * buffer, which with a producer that targets a nearly-full
+         * ring meant audio_mix ran in IRQ context on essentially every
+         * DMA interrupt — racing the main loop's channel start/stop
+         * updates thousands of times more often than the old
+         * only-when-empty behavior ever did (bench: WC1 audio skip +
+         * freeze at map load, peak channel churn). When the main loop
+         * is healthy it keeps depth far above low-water and this never
+         * fires. */
         uint32_t depth = mix_wr - mix_rd;
         int pcm_active = 0;
         for (int ch = 0; ch < AUDIO_MAX_CHANNELS; ch++)
             if (channels[ch].active) { pcm_active = 1; break; }
         if (pcm_active && !mix_in_progress &&
+            depth < (uint32_t)AUDIO_BUF_HALF * 2 &&
             depth + (uint32_t)AUDIO_BUF_HALF <= MIX_BUF_SIZE) {
             audio_mix(AUDIO_BUF_HALF / 2);
         }

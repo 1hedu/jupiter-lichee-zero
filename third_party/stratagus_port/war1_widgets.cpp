@@ -487,6 +487,7 @@ static uint32_t s_menu_open_frame = 0;
  * a still-cached tolua_ubox entry is the use-after-free path the doc
  * warns about). We just empty the menu's container. */
 #include <set>
+#include <map>
 #include <list>
 #include <guisan/focushandler.hpp>
 #include <guisan/widgets/container.hpp>
@@ -544,19 +545,42 @@ extern "C" void war1_menu_subtree_sweep(void)
     if (!Gui) return;
     gcn::Widget *top = Gui->getTop();
     bool any_swept = false;
+    /* Grace period: a menu must be continuously dead (not top, not on
+     * MenuStack) for this many frames before its widgets are freed.
+     * The briefing → map transition runs Lua + loader code that can
+     * still poke the just-closed menu's widgets; sweeping on the very
+     * first game cycle deletes them mid-transition. 64 frames ≈ 1 s —
+     * long after the load settles, well before memory pressure. */
+    static std::map< ::MenuScreen *, uint32_t > s_dead_since;
     for (auto it = s_live_menus.begin(); it != s_live_menus.end(); ) {
         ::MenuScreen *m = *it;
-        if (m == top) { ++it; continue; }
-        bool on_stack = false;
-        {
+        bool on_stack = (m == top);
+        if (!on_stack) {
             std::stack< ::MenuScreen * > tmp = MenuStack;
             while (!tmp.empty()) {
                 if (tmp.top() == m) { on_stack = true; break; }
                 tmp.pop();
             }
         }
-        if (on_stack) { ++it; continue; }
+        if (on_stack) {
+            s_dead_since.erase(m);   /* alive again — restart the clock */
+            ++it;
+            continue;
+        }
+        auto ds = s_dead_since.find(m);
+        if (ds == s_dead_since.end()) {
+            s_dead_since[m] = g_war1_frame_counter;
+            ++it;
+            continue;
+        }
+        if (g_war1_frame_counter - ds->second < 64) { ++it; continue; }
+        /* Log BEFORE deleting: if a teardown ever hangs, the last UART
+         * line names the culprit instead of going silent. */
+        uart_puts("[SW] tearing down menu ");
+        uart_puthex((unsigned)(uintptr_t)m);
+        uart_puts("\n");
         teardown_dead_menu(m);
+        s_dead_since.erase(m);
         s_swept_menus.insert(m);
         it = s_live_menus.erase(it);
         any_swept = true;

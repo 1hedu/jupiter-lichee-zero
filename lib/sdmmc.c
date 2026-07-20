@@ -669,8 +669,18 @@ int sdmmc_read_blocks(uint32_t lba, uint32_t count, void *dst)
     if (!g_card.initialised) return -1;
     if (((uintptr_t)dst) & 3u) return -2;
     if (count == 0) return 0;
-    /* Bounds check, phrased to be immune to lba+count wrap-around. */
-    if (lba >= g_card.num_blocks || count > g_card.num_blocks - lba) return -3;
+    /* Capacity check (wrap-around-immune) — WARN ONLY for reads. The
+     * capacity comes from our CSD parse; if that parse is ever wrong
+     * on some card/controller quirk, hard-rejecting here makes the
+     * whole filesystem unreadable past a phantom boundary. An out-of-
+     * range READ is harmless at the card level (it errors or returns
+     * garbage, both bounded) — so log loudly and let the card decide.
+     * Writes below keep the hard reject: scribbling past a phantom
+     * boundary is how filesystems die. */
+    if (lba >= g_card.num_blocks || count > g_card.num_blocks - lba) {
+        LOG_DEC("read past parsed capacity? lba", lba);
+        LOG_DEC("  parsed num_blocks", g_card.num_blocks);
+    }
     if (count == 1) {
         return sdmmc_read_one_block(lba, (uint32_t *)dst);
     }
