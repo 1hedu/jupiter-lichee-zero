@@ -292,10 +292,11 @@ static void GameLogicLoop()
 		SinglePlayerReplayEachCycle();
 		++GameCycle;
 		MultiPlayerReplayEachCycle();
-		/* Per-stage tick — gated to every 8th cycle (~3 Hz at 30 fps).
-		 * On hang, the last "[ST] enter <name>" before silence pinpoints
-		 * which subsystem is stuck. */
-		bool log_stages = ((GameCycle & 0x7) == 0);
+		/* Per-stage tick — every cycle for the first 32 (bench: a hang
+		 * lands in cycles 1-7 before the every-8th gate ever fires),
+		 * then every 8th (~3 Hz at 30 fps). On hang, the last
+		 * "[ST] <name>" before silence pinpoints the stuck subsystem. */
+		bool log_stages = (GameCycle < 32) || ((GameCycle & 0x7) == 0);
 		if (log_stages) { uart_puts("[ST] cyc="); uart_putdec((unsigned)GameCycle); uart_puts(" Net\n"); }
 		NetworkCommands();
 		if (log_stages) { uart_puts("[ST] Trig\n"); }
@@ -379,6 +380,7 @@ static void GameLogicLoop()
 	ParticleManager.update(); // handle particles
 
 	if (FastForwardCycle <= GameCycle || !(GameCycle & CallPeriod::cEvery256th)) {
+		if (GameCycle < 32) { uart_puts("[ST] Wait\n"); }
 		WaitEventsOneFrame();
 	}
 
@@ -393,9 +395,15 @@ static void GameLogicLoop()
 
 static void DisplayLoop()
 {
+	/* Same first-32-cycles instrumentation as GameLogicLoop — the
+	 * display side does real work too (minimap cache bake, fog update,
+	 * full repaint) and a hang here is otherwise silent. */
+	bool log_disp = (GameCycle < 32);
+
 	CheckViewportMode();
 
 	if (UI.Minimap.UpdateCache) {
+		if (log_disp) { uart_puts("[DL] MinimapUpd\n"); }
 		UI.Minimap.Update();
 		UI.Minimap.UpdateCache = false;
 	}
@@ -405,9 +413,12 @@ static void DisplayLoop()
 	ColorCycle();
 
 	if (FastForwardCycle <= GameCycle || GameCycle <= 10 || !(GameCycle & CallPeriod::cEvery256th)) {
+		if (log_disp) { uart_puts("[DL] FogUpd\n"); }
 		FogOfWar->Update(FastForwardCycle > GameCycle);
 
+		if (log_disp) { uart_puts("[DL] UpdDisp\n"); }
 		UpdateDisplay();
+		if (log_disp) { uart_puts("[DL] Realize\n"); }
 		RealizeVideoMemory();
 	}
 	if ((GameCycle & 0xF) == 0) {
