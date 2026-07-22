@@ -19,6 +19,13 @@
  *                dump), so expect 0 here until that lands — the HUD
  *                says so honestly.
  *
+ * The screen itself is the README's Mercury layer stack, composited by
+ * the DE2 blender in hardware:
+ *   VI0 = V3s background (dusk scene, drawn once)
+ *   VI1 = the Pico's 3D frame in a hardware-positioned 320x224 window
+ *   UI0 = V3s HUD with per-pixel alpha on top
+ * — the 32X arrangement: 2D console layers around a coprocessor's 3D.
+ *
  * Wiring (see mercury/README.md):
  *   SPI:  V3s PC1=CLK PC2=CS PC3=MOSI  →  Pico GP10=SCK GP9=CSn GP8=RX
  *   I2C:  V3s PB6=SCL PB7=SDA          →  bridge TC358743 (addr 0x0F)
@@ -236,66 +243,118 @@ static uint32_t build_cube_dl(uint8_t *dl, uint8_t angle)
 #define COL_BAD    0xFFE05555
 #define COL_DIM    0xFF555F6A
 
-/* CSI capture buffer: the VI1 sprite slot — this example never uses
- * VI1, and 320x224 R3G3B2 is 70 KB of its 1 MB. */
-#define CAPTURE_BUF  SPR_ADDR
-/* Captured-frame window position on the LCD */
+/* ---- The Mercury layer stack, for real (the 32X pitch) ----
+ *   VI0 (FB0)      V3s background — dusk scene, drawn once
+ *   VI1 (SPR)      the Pico's 3D frame, a hardware-positioned window
+ *   UI0 (OVL)      V3s HUD, per-pixel alpha on top
+ * The DE2 blender composites all three during scanout — the only CPU
+ * pixel work after boot is converting each captured R3G3B2 frame into
+ * the VI1 buffer. */
+
+/* VI1 scans SPR_ADDR (ARGB, pitch = window width). Raw R3G3B2 capture
+ * lands in the top half of the same 1 MB slot — that range doubles as
+ * cedar's BUF_INPUT, but this example never touches the codec. */
+#define WINDOW_BUF   SPR_ADDR
+#define CAPTURE_BUF  (SPR_ADDR + 0x80000)
+/* Pico-frame window position on the LCD */
 #define CAP_X  ((LCD_W - MERC_W) / 2)
 #define CAP_Y  20
 
-static void hud_static(volatile uint32_t *fb)
+static uint32_t hash2(uint32_t x, uint32_t y)
 {
-    for (uint32_t i = 0; i < LCD_W * LCD_H; i++)
-        fb[i] = COL_BG;
-    draw_text(fb, LCD_W, "MERCURY GPU BRING-UP", 8, 4, 1, COL_HEAD);
-    /* capture window frame */
-    for (int x = CAP_X - 1; x <= CAP_X + MERC_W; x++) {
-        fb[(CAP_Y - 1) * LCD_W + x]      = COL_DIM;
-        fb[(CAP_Y + MERC_H) * LCD_W + x] = COL_DIM;
-    }
-    for (int y = CAP_Y - 1; y <= CAP_Y + MERC_H; y++) {
-        fb[y * LCD_W + CAP_X - 1]      = COL_DIM;
-        fb[y * LCD_W + CAP_X + MERC_W] = COL_DIM;
-    }
-    draw_text(fb, LCD_W, "PICO FRAME VIA CSI - MIPI PHY TODO",
-              CAP_X + 8, CAP_Y + MERC_H / 2 - 4, 1, COL_DIM);
+    uint32_t h = x * 374761393u + y * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return h ^ (h >> 16);
 }
 
-static void hud_status(volatile uint32_t *fb, int bridge_ok, uint8_t st,
+/* VI0: the V3s background layer — dusk bands, stars, ridge line.
+ * Drawn once; the blender does the rest forever. */
+static void draw_background(volatile uint32_t *fb)
+{
+    static const uint32_t bands[8] = {
+        0xFF0B1026, 0xFF141A3A, 0xFF232558, 0xFF3A2E6E,
+        0xFF5C3B7E, 0xFF8A4A86, 0xFFC75B79, 0xFFF07A5A,
+    };
+    for (uint32_t y = 0; y < LCD_H; y++) {
+        uint32_t c = bands[y * 8 / LCD_H];
+        for (uint32_t x = 0; x < LCD_W; x++)
+            fb[y * LCD_W + x] = c;
+    }
+    for (uint32_t y = 8; y < LCD_H / 2; y += 8)
+        for (uint32_t x = 4; x < LCD_W - 4; x += 8)
+            if ((hash2(x, y) % 37) == 0)
+                fb[y * LCD_W + x] = 0xFFE8ECFF;
+    for (uint32_t x = 0; x < LCD_W; x++) {
+        uint32_t h = 10 + (hash2(x >> 4, 7) % 14);
+        for (uint32_t y = LCD_H - h; y < LCD_H; y++)
+            fb[y * LCD_W + x] = 0xFF191230;
+    }
+    /* frame around where the VI1 window sits */
+    for (int x = CAP_X - 1; x <= CAP_X + MERC_W; x++) {
+        fb[(CAP_Y - 1) * LCD_W + x]      = COL_HEAD;
+        fb[(CAP_Y + MERC_H) * LCD_W + x] = COL_HEAD;
+    }
+    for (int y = CAP_Y - 1; y <= CAP_Y + MERC_H; y++) {
+        fb[y * LCD_W + CAP_X - 1]      = COL_HEAD;
+        fb[y * LCD_W + CAP_X + MERC_W] = COL_HEAD;
+    }
+}
+
+/* VI1: placeholder content until CSI frames arrive (dark panel +
+ * faint grid so the hardware window is visibly its own layer). */
+static void draw_window_placeholder(volatile uint32_t *win)
+{
+    for (int y = 0; y < MERC_H; y++)
+        for (int x = 0; x < MERC_W; x++) {
+            uint32_t c = COL_BG;
+            if ((x & 31) == 0 || (y & 31) == 0) c = 0xFF1A2130;
+            win[y * MERC_W + x] = c;
+        }
+    draw_text(win, MERC_W, "PICO FRAME VIA CSI - MIPI PHY TODO",
+              MERC_W / 2 - 102, MERC_H / 2 - 4, 1, COL_DIM);
+}
+
+/* UI0: title + status strip, per-pixel alpha over everything. */
+static void hud_title(volatile uint32_t *ovl)
+{
+    draw_text(ovl, LCD_W, "MERCURY GPU BRING-UP", 8, 4, 1, COL_HEAD);
+}
+
+static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
                        uint32_t spi_sent, uint32_t spi_errs, uint32_t csi_frames)
 {
-    /* status strip along the bottom, redrawn every second */
+    /* translucent status strip along the bottom, redrawn every second */
     int y = LCD_H - 24;
     for (uint32_t i = (uint32_t)y * LCD_W; i < LCD_W * LCD_H; i++)
-        fb[i] = COL_BG;
+        ovl[i] = 0xC010141E;
 
-    draw_text(fb, LCD_W, "BRIDGE:", 8, y, 1, COL_LABEL);
+    draw_text(ovl, LCD_W, "BRIDGE:", 8, y, 1, COL_LABEL);
     if (!bridge_ok) {
-        draw_text(fb, LCD_W, "NO ACK", 56, y, 1, COL_BAD);
+        draw_text(ovl, LCD_W, "NO ACK", 56, y, 1, COL_BAD);
     } else {
-        draw_text(fb, LCD_W, "TMDS", 56, y, 1,
+        draw_text(ovl, LCD_W, "TMDS", 56, y, 1,
                   (st & TC_MASK_S_TMDS)     ? COL_OK : COL_DIM);
-        draw_text(fb, LCD_W, "PLL", 88, y, 1,
+        draw_text(ovl, LCD_W, "PLL", 88, y, 1,
                   (st & TC_MASK_S_PHY_PLL)  ? COL_OK : COL_DIM);
-        draw_text(fb, LCD_W, "SCDT", 112, y, 1,
+        draw_text(ovl, LCD_W, "SCDT", 112, y, 1,
                   (st & TC_MASK_S_PHY_SCDT) ? COL_OK : COL_DIM);
-        draw_text(fb, LCD_W, "SYNC", 144, y, 1,
+        draw_text(ovl, LCD_W, "SYNC", 144, y, 1,
                   (st & TC_MASK_S_SYNC)     ? COL_OK : COL_DIM);
     }
 
-    draw_text(fb, LCD_W, "SPI:", 184, y, 1, COL_LABEL);
-    draw_dec(fb, LCD_W, spi_sent, 212, y, 1, spi_errs ? COL_BAD : COL_OK);
+    draw_text(ovl, LCD_W, "SPI:", 184, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, spi_sent, 212, y, 1, spi_errs ? COL_BAD : COL_OK);
     if (spi_errs) {
-        draw_text(fb, LCD_W, "E", 268, y, 1, COL_BAD);
-        draw_dec(fb, LCD_W, spi_errs, 276, y, 1, COL_BAD);
+        draw_text(ovl, LCD_W, "E", 268, y, 1, COL_BAD);
+        draw_dec(ovl, LCD_W, spi_errs, 276, y, 1, COL_BAD);
     }
 
-    draw_text(fb, LCD_W, "CSI:", 316, y, 1, COL_LABEL);
-    draw_dec(fb, LCD_W, csi_frames, 344, y, 1,
+    draw_text(ovl, LCD_W, "CSI:", 316, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, csi_frames, 344, y, 1,
              csi_frames ? COL_OK : COL_DIM);
 
     y += 12;
-    draw_text(fb, LCD_W, "HDMI MONITOR ON PICO SHOWS THE CUBE - DUSK COLORS: V3S DRIVING",
+    draw_text(ovl, LCD_W, "HDMI MONITOR ON PICO SHOWS THE CUBE - DUSK COLORS: V3S DRIVING",
               8, y, 1, COL_DIM);
 }
 
@@ -314,8 +373,19 @@ int main(void)
 
     uart_puts("\n=== Mercury GPU bring-up (V3s side) ===\n");
 
-    volatile uint32_t *fb = (volatile uint32_t *)FB0_ADDR;
-    hud_static(fb);
+    /* Build the three hardware layers (see the layer-stack comment):
+     * background on VI0, Pico window on VI1, HUD on UI0. */
+    volatile uint32_t *fb  = (volatile uint32_t *)FB0_ADDR;
+    volatile uint32_t *win = (volatile uint32_t *)WINDOW_BUF;
+    volatile uint32_t *ovl = (volatile uint32_t *)OVL_ADDR;
+
+    draw_background(fb);
+    draw_window_placeholder(win);
+    memset32_neon(OVL_ADDR, 0x00000000, LCD_W * LCD_H * 4);
+    hud_title(ovl);
+    dcache_clean_range(WINDOW_BUF, MERC_W * MERC_H * 4);
+    dcache_clean_fb(OVL_ADDR);
+    video_vi1_init(CAP_X, CAP_Y, MERC_W, MERC_H);
 
     /* --- 1. Bridge --- */
     int bridge_ok = (tc358743_init() == 0);
@@ -354,30 +424,28 @@ int main(void)
         else spi_errs++;
         angle++;
 
-        /* captured frame? convert into the LCD window */
+        /* captured frame? convert straight into the VI1 window buffer —
+         * the blender positions and composites it in hardware */
         if (csi_frame_ready()) {
             csi_frames++;
             dcache_invalidate_range(CAPTURE_BUF, MERC_W * MERC_H);
-            const uint8_t *src = (const uint8_t *)CAPTURE_BUF;
-            for (int y = 0; y < MERC_H; y++) {
-                volatile uint32_t *dst = fb + (CAP_Y + y) * LCD_W + CAP_X;
-                mercury_r3g3b2_to_argb((uint32_t *)dst,
-                                       src + y * MERC_W, MERC_W, 1);
-            }
+            mercury_r3g3b2_to_argb((uint32_t *)WINDOW_BUF,
+                                   (const uint8_t *)CAPTURE_BUF,
+                                   MERC_W, MERC_H);
+            dcache_clean_range(WINDOW_BUF, MERC_W * MERC_H * 4);
         }
 
-        /* 1 Hz status refresh */
+        /* 1 Hz status refresh on the UI0 overlay */
         if ((frame++ & 63) == 0) {
             if (bridge_ok) st = tc358743_status();
-            hud_status(fb, bridge_ok, st, spi_sent, spi_errs, csi_frames);
+            hud_status(ovl, bridge_ok, st, spi_sent, spi_errs, csi_frames);
             uart_puts("[mercury] status=");  uart_puthex(st);
             uart_puts(" spi=");   uart_putdec(spi_sent);
             uart_puts(" errs=");  uart_putdec(spi_errs);
             uart_puts(" csi=");   uart_putdec(csi_frames);
             uart_puts("\n");
-            dcache_clean_fb(FB0_ADDR);
-        } else if (csi_frames) {
-            dcache_clean_fb(FB0_ADDR);
+            dcache_clean_range(OVL_ADDR + (LCD_H - 24) * LCD_W * 4,
+                               24 * LCD_W * 4);
         }
 
         video_wait_vblank();
