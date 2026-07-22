@@ -180,6 +180,7 @@ extern void hdma_bench_main(void);
 extern void hstimer_raster_main(void);
 extern void scaler_probe_main(void);
 extern void de2_probe_main(void);
+extern void mercury_gpu_main(void);
 
 /* ================================================================
  * Menu table
@@ -257,6 +258,7 @@ static const menu_entry_t entries[] = {
     {"HSTimer Raster",          hstimer_raster_main,     ENTRY_DEMO},
     {"Scaler Probe",            scaler_probe_main,       ENTRY_DEMO},
     {"DE2 Probe (CK/subwin)",   de2_probe_main,          ENTRY_DEMO},
+    {"Mercury GPU Bring-Up",    mercury_gpu_main,        ENTRY_DEMO},
 };
 #define NUM_ENTRIES (sizeof(entries)/sizeof(entries[0]))
 

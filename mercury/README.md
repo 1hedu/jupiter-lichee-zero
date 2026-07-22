@@ -195,8 +195,23 @@ mercury/
 │                                  clip-equivalence fuzz, hostile-input fuzz (ASan)
 └── v3s_side/
     ├── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
+    ├── mercury_spi_master.h       V3s SPI0 master — CS-framed display-list sender
     └── tc358743_init.h            HDMI→CSI bridge I2C bring-up (TWI0, from mainline driver)
 ```
+
+## V3s-side example: `examples/mercury_gpu`
+
+`make GAME=examples/mercury_gpu/main.c` (also in the menu under
+Benchmarks) drives all three legs of the link with a live HUD:
+bridge I2C init + SYS_STATUS decode (TMDS/PLL/SCDT/SYNC), a
+spinning-cube display list streamed over SPI0 at 60 Hz, and the CSI
+capture counter. Best first bring-up: no bridge at all — plug the
+Pico's DVI into a monitor, run the example, and the Pico's self-test
+cube (primary colors) should be replaced by the V3s-commanded cube
+(dusk palette). That proves V3s→SPI→Pico→raster end to end. The
+display-list builder is verified byte-compatible with the Pico parser
+by a host round-trip test (built on the V3s side, executed by
+mercury_displaylist.c + mercury_raster.c, rendered to PNG).
 
 ## Host tests
 
