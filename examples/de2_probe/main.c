@@ -1,7 +1,7 @@
 /*
  * DE2 capability probe — three unanswered hardware questions, one flash
  *
- * PHASE A: BLENDER COLORKEY (configs 0-11)
+ * PHASE A: BLENDER COLORKEY (configs 0-23; round 2 = 12+)
  *   The DE2 blend block carries CK_CTL/CK_CFG/CK_MAX/CK_MIN registers
  *   that Linux never drives and no public doc explains for the V3s.
  *   If they work, an opaque VI layer gets "magic pink" punch-through —
@@ -15,7 +15,8 @@
  *        config number. Note the number, tell the SDK.
  *     -> Magenta stays solid on all 12 = keying is fused/absent.
  *
- * PHASE B: VI CHANNEL SUB-WINDOWS (config 12)
+ * PHASE B: VI CHANNEL SUB-WINDOWS (config 24) — CONFIRMED on
+ * silicon: all four slots render (round 1 bench).
  *   Each VI channel has four overlay slots (ATTR/MBSIZE/COOR/PITCH/
  *   LADDR with a 0x30 stride). Linux only ever uses slot 0. The probe
  *   enables all four with different solid colors at staggered
@@ -24,7 +25,8 @@
  *        windows per channel. Huge.
  *     -> ONE red square = slot 0 only, the rest are fused/ignored.
  *
- * PHASE C: WINDOW ANIMATION (config 13)
+ * PHASE C: WINDOW ANIMATION (config 25) — CONFIRMED smooth on
+ * silicon: size+position tween tear-free (round 1 bench).
  *   Answers the original question: can a VI window's position AND
  *   dimensions animate per frame? The probe re-programs VI1's
  *   MBSIZE/OVL_SIZE/INSIZE/OFFSET every vblank — a breathing,
@@ -96,13 +98,22 @@ static void draw_text(volatile uint32_t *buf, uint32_t pitch,
 }
 
 /* ---- colorkey sweep table ----
- * Interpretations to try, based on the DE2 register family layout:
- * CK_CTL bit i = enable key i (gates pipe i vs pipe i+1); high bits
- * 8+2i = per-key "direction" guesses. CK_CFG = per-channel match
- * enables in nibbles/bytes. MAX/MIN are set to magenta for pipes 0-2
- * so pipe-index ambiguity can't hide a hit. */
+ * ROUND 1 SILICON RESULTS (Lichee Pi Zero bench): configs with
+ * CTL=0x03 / 0x07 REACT — the comparator is live, matching magenta
+ * against MIN=MAX exactly — but with the polarity INVERTED from the
+ * magic-pink convention: pixels MATCHING the key kept the top layer,
+ * everything else (white bars, ink text) went transparent to the
+ * VI0 gradient. So under enable bits 0+1 the key defines the top
+ * layer's OPAQUE set. Round 1 only tried the direction-guess bits
+ * (8+) with the single enable bit that does nothing on its own; it
+ * never combined them with the working 0x03/0x07 enables.
+ *
+ * ROUND 2 (configs 12+): sweep the direction bits ON TOP of the
+ * proven-reactive enables, hunting the match->transparent mode
+ * (magenta punches through = magic pink found). */
 #define KEY_COLOR 0x00FF00FF   /* magenta, no alpha bits */
-static const struct { uint32_t ctl, cfg; } ck_sweep[12] = {
+static const struct { uint32_t ctl, cfg; } ck_sweep[] = {
+    /* round 1 — kept for regression (9-11 = inverse-key hits) */
     { 0x00000001, 0x00000000 },
     { 0x00000001, 0x00000007 },
     { 0x00000001, 0x00000777 },
@@ -115,10 +126,24 @@ static const struct { uint32_t ctl, cfg; } ck_sweep[12] = {
     { 0x00000003, 0x00000007 },
     { 0x00000007, 0x00000007 },
     { 0x00000007, 0x07070707 },
+    /* round 2 — direction bits x working enables. WIN = the magenta
+     * field punches through to the gradient while bars/text stay. */
+    { 0x00000103, 0x00000007 },     /* cfg 12 */
+    { 0x00000203, 0x00000007 },     /* cfg 13 */
+    { 0x00000303, 0x00000007 },     /* cfg 14 */
+    { 0x00000403, 0x00000007 },     /* cfg 15 */
+    { 0x00000503, 0x00000007 },     /* cfg 16 */
+    { 0x00000603, 0x00000007 },     /* cfg 17 */
+    { 0x00000703, 0x00000007 },     /* cfg 18 */
+    { 0x00000107, 0x00000007 },     /* cfg 19 */
+    { 0x00000407, 0x00000007 },     /* cfg 20 */
+    { 0x00000707, 0x00000007 },     /* cfg 21 */
+    { 0x00000507, 0x07070707 },     /* cfg 22 */
+    { 0x00000707, 0x07070707 },     /* cfg 23 */
 };
-#define NUM_CK   12
-#define PH_SUBWIN (NUM_CK)      /* config 12 */
-#define PH_ANIM   (NUM_CK + 1)  /* config 13 */
+#define NUM_CK   ((int)(sizeof(ck_sweep) / sizeof(ck_sweep[0])))
+#define PH_SUBWIN (NUM_CK)      /* after the CK sweep */
+#define PH_ANIM   (NUM_CK + 1)
 #define NUM_PH    (NUM_CK + 2)
 
 /* VI1 full-screen buffer lives in the SPR slot (fits: 510KB < 512KB) */
@@ -246,7 +271,7 @@ int main(void)
 
     uart_puts("\n=== DE2 capability probe ===\n");
     uart_puts("A/Right = next config, Left = prev. Configs:\n");
-    uart_puts("  0-11 colorkey sweep, 12 sub-windows, 13 animation\n\n");
+    uart_puts("  0-23 colorkey sweep (12+ = round 2 dir bits), then sub-windows, animation\n\n");
 
     video_init();
     video_mode(2);   /* VI0 + VI1 + UI0 routing baseline */

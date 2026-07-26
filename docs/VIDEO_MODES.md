@@ -66,28 +66,29 @@ scanout. There is no scaler on V3s silicon (the VSU is fused off — see
 
 ## Open hardware questions — `examples/de2_probe`
 
-Three DE2 capabilities exist in the register map but have never been
-driven on V3s silicon (Linux ignores them, no public doc). The
-`de2_probe` example (also in the menu, under Benchmarks) answers all
-three in one flash — A/Right steps configs, UART logs every register
-write:
+Three DE2 capabilities that exist in the register map but that Linux
+never drives and no public doc explains. **Round-1 silicon results are
+in** (Lichee Pi Zero bench):
 
-1. **Blender colorkey** (configs 0–11): CK_CTL/CK_CFG/CK_MAX/CK_MIN at
-   BLD +0xB0/+0xB4/+0xC0/+0xE0. The probe fills a full-screen VI1 with
-   magenta + white bars over an animated VI0 gradient and sweeps 12
-   plausible CTL/CFG interpretations. *Gradient punching through the
-   magenta at config N = hardware colorkey works* — note N, and Mode 5
-   grows a dual-full-playfield variant (plus "magic pink" sprite
-   layers on an opaque channel). Solid magenta on all 12 = absent.
-2. **VI sub-windows** (config 12): every VI channel has four overlay
-   slots (0x30-stride register groups); Linux drives only slot 0. The
-   probe enables all four with staggered colored squares. *Four
-   squares = up to four hardware rects per channel.* One red square =
-   slot 0 only.
-3. **Window animation** (config 13): re-programs VI1's size + position
-   every vblank — a breathing, orbiting box. *Smooth = animate layer
-   dimensions freely* (hardware window tweens, iris wipes, zoom-boxes).
-   Tearing or hangs = size changes need vblank-latch care.
+1. **Blender colorkey — LIVE, polarity being pinned down.** The
+   CK_CTL/CK_CFG/CK_MAX/CK_MIN registers (BLD +0xB0/+0xB4/+0xC0/+0xE0)
+   are functional: with CTL=0x03/0x07 the comparator matched an exact
+   MIN=MAX magenta key, but inverted from the magic-pink convention —
+   pixels MATCHING the key kept the top layer while everything else
+   went transparent to the layer below ("key = the opaque set"). The
+   probe's round-2 configs (12–23) sweep the direction bits combined
+   with the proven enables, hunting the match→transparent mode. The
+   moment the magenta field itself punches through: hardware magic
+   pink, and Mode 5 grows a dual-full-playfield variant. Even the
+   inverse mode as-is is usable (single-color hardware masks/cutouts).
+2. **VI sub-windows — CONFIRMED.** All four overlay slots per VI
+   channel (0x30-stride register groups) render — four staggered
+   colored squares on the bench. Up to four hardware rects per VI
+   channel, eight across VI0+VI1, where Linux only ever uses one.
+3. **Window animation — CONFIRMED.** VI1's size and position
+   re-programmed every vblank produce a smooth breathing, orbiting
+   box with no tearing. Hardware window tweens, iris wipes, and
+   zoom-boxes are free.
 
 ## Verification status
 
