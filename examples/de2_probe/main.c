@@ -1,7 +1,7 @@
 /*
  * DE2 capability probe — three unanswered hardware questions, one flash
  *
- * PHASE A: BLENDER COLORKEY (configs 0-23; round 2 = 12+)
+ * PHASE A: BLENDER COLORKEY (round 3: window-exclusion sweep)
  *   The DE2 blend block carries CK_CTL/CK_CFG/CK_MAX/CK_MIN registers
  *   that Linux never drives and no public doc explains for the V3s.
  *   If they work, an opaque VI layer gets "magic pink" punch-through —
@@ -112,34 +112,39 @@ static void draw_text(volatile uint32_t *buf, uint32_t pitch,
  * proven-reactive enables, hunting the match->transparent mode
  * (magenta punches through = magic pink found). */
 #define KEY_COLOR 0x00FF00FF   /* magenta, no alpha bits */
-static const struct { uint32_t ctl, cfg; } ck_sweep[] = {
-    /* round 1 — kept for regression (9-11 = inverse-key hits) */
-    { 0x00000001, 0x00000000 },
-    { 0x00000001, 0x00000007 },
-    { 0x00000001, 0x00000777 },
-    { 0x00000001, 0x07070707 },
-    { 0x00000101, 0x00000007 },
-    { 0x00000201, 0x00000007 },
-    { 0x00000301, 0x00000007 },
-    { 0x00000002, 0x00000007 },
-    { 0x00000402, 0x00000007 },
-    { 0x00000003, 0x00000007 },
-    { 0x00000007, 0x00000007 },
-    { 0x00000007, 0x07070707 },
-    /* round 2 — direction bits x working enables. WIN = the magenta
-     * field punches through to the gradient while bars/text stay. */
-    { 0x00000103, 0x00000007 },     /* cfg 12 */
-    { 0x00000203, 0x00000007 },     /* cfg 13 */
-    { 0x00000303, 0x00000007 },     /* cfg 14 */
-    { 0x00000403, 0x00000007 },     /* cfg 15 */
-    { 0x00000503, 0x00000007 },     /* cfg 16 */
-    { 0x00000603, 0x00000007 },     /* cfg 17 */
-    { 0x00000703, 0x00000007 },     /* cfg 18 */
-    { 0x00000107, 0x00000007 },     /* cfg 19 */
-    { 0x00000407, 0x00000007 },     /* cfg 20 */
-    { 0x00000707, 0x00000007 },     /* cfg 21 */
-    { 0x00000507, 0x07070707 },     /* cfg 22 */
-    { 0x00000707, 0x07070707 },     /* cfg 23 */
+/* ROUND 2 RESULT: bits 8-10 of CTL do nothing (all dir-bit combos
+ * behaved identically to plain 0x03/0x07) — there is no direction
+ * field there. Working model after two rounds:
+ *   - CTL bit per PIPE: a key activates between adjacent pipes when
+ *     both endpoints' bits are set (0x03 = key between P0 and P1).
+ *   - Fixed semantics: TOP pipe pixel inside [MIN,MAX] -> top shown;
+ *     outside -> bottom shows through. (The "inverse key".)
+ * ROUND 3 exploits that as-is: WINDOW EXCLUSION. Key window
+ * [0x000000, 0xFFFFFE] contains every color EXCEPT blue=0xFF —
+ * magenta (FF00FF) falls outside -> punches to the gradient, while
+ * white bars (B=E8) and ink text (B=1E) stay. Magic pink from the
+ * observed semantics, no polarity flip needed: art simply avoids
+ * pure-0xFF blue (invisible restriction). Plus channel-mapping and
+ * invert-bit probes for CFG. */
+static const struct { uint32_t ctl, cfg, min, max; } ck_sweep[] = {
+    /* 0-2: round-1 regression baseline */
+    { 0x01, 0x00000007, KEY_COLOR,  KEY_COLOR  },  /* null control     */
+    { 0x03, 0x00000007, KEY_COLOR,  KEY_COLOR  },  /* inverse-key hit  */
+    { 0x07, 0x00000007, KEY_COLOR,  KEY_COLOR  },  /* inverse-key hit  */
+    /* 3-5: window exclusion — 3 is THE magic-pink candidate */
+    { 0x03, 0x00000007, 0x00000000, 0x00FFFFFE },  /* exclude B=FF: WIN if magenta punches */
+    { 0x03, 0x00000007, 0x00000000, 0x00FEFFFF },  /* exclude R=FF: should also punch      */
+    { 0x03, 0x00000007, 0x00000000, 0x00FFFEFF },  /* exclude G=FF: CONTROL - no punch     */
+    /* 6-8: CFG channel-map probes (single bit, exact-magenta key) */
+    { 0x03, 0x00000001, KEY_COLOR,  KEY_COLOR  },
+    { 0x03, 0x00000002, KEY_COLOR,  KEY_COLOR  },
+    { 0x03, 0x00000004, KEY_COLOR,  KEY_COLOR  },
+    /* 9-12: CFG invert-bit guesses (a set bit above the channel
+     * trio flipping match->transparent would beat the window trick) */
+    { 0x03, 0x0000000F, KEY_COLOR,  KEY_COLOR  },
+    { 0x03, 0x00000070, KEY_COLOR,  KEY_COLOR  },
+    { 0x03, 0x00000077, KEY_COLOR,  KEY_COLOR  },
+    { 0x03, 0x00000700, KEY_COLOR,  KEY_COLOR  },
 };
 #define NUM_CK   ((int)(sizeof(ck_sweep) / sizeof(ck_sweep[0])))
 #define PH_SUBWIN (NUM_CK)      /* after the CK sweep */
@@ -181,8 +186,8 @@ static void apply_ck(int i)
     BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
 
     for (int k = 0; k < 3; k++) {
-        BLD_CK_MAX(k) = KEY_COLOR;
-        BLD_CK_MIN(k) = KEY_COLOR;
+        BLD_CK_MAX(k) = ck_sweep[i].max;
+        BLD_CK_MIN(k) = ck_sweep[i].min;
     }
     BLD_CK_CTL = ck_sweep[i].ctl;
     BLD_CK_CFG = ck_sweep[i].cfg;
@@ -191,7 +196,8 @@ static void apply_ck(int i)
     uart_puts("[probe] CK cfg "); uart_putdec((uint32_t)i);
     uart_puts(": CTL="); uart_puthex(ck_sweep[i].ctl);
     uart_puts(" CFG="); uart_puthex(ck_sweep[i].cfg);
-    uart_puts(" MAX=MIN="); uart_puthex(KEY_COLOR);
+    uart_puts(" MIN="); uart_puthex(ck_sweep[i].min);
+    uart_puts(" MAX="); uart_puthex(ck_sweep[i].max);
     uart_puts("\n");
 }
 
@@ -271,7 +277,7 @@ int main(void)
 
     uart_puts("\n=== DE2 capability probe ===\n");
     uart_puts("A/Right = next config, Left = prev. Configs:\n");
-    uart_puts("  0-23 colorkey sweep (12+ = round 2 dir bits), then sub-windows, animation\n\n");
+    uart_puts("  0-12 colorkey round 3 (3 = magic-pink candidate), then sub-windows, animation\n\n");
 
     video_init();
     video_mode(2);   /* VI0 + VI1 + UI0 routing baseline */
