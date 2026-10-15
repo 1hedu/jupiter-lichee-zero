@@ -193,9 +193,14 @@ int main(void)
             j32x_exec_displaylist(dl_recv_buf, (uint32_t)len);
             got_spi = true;
         } else if (!got_spi) {
-            /* No SPI master ever connected — run self-test cube */
+            /* No SPI master ever connected — run self-test cube. No
+             * sleep: self_test_frame() ends in j32x_swap(), which blocks
+             * until the scanout's next frame boundary, so the loop is
+             * already locked to the display at 60 fps. (A sleep_ms(16)
+             * here put render+sleep right on the 16.67 ms frame edge:
+             * small cube faces fit in one frame, big ones missed it and
+             * waited for the next — a regular 60/30 fps stutter.) */
             self_test_frame(angle++);
-            sleep_ms(16);  /* ~60fps */
         }
         /* If got_spi but no data this poll: just loop back and check again.
          * The V3s sends a new display list each frame at ~60fps. */
