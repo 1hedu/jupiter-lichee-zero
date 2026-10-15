@@ -234,6 +234,28 @@ this table had that wrong. FPC breakouts and cables can mirror the
 numbering (pin 1 <-> 15): if I2C works on the board's labelled SDA/SCL,
 the lane pins follow that same labelling.)
 
+**Check before powering:** with everything unplugged, put a meter on
+continuity against the bridge's HDMI socket shell (ground). Pins
+1/4/7/10 must beep and pin 15 must not. If **15 beeps**, your breakout
+counts from the other end (real pin = 16 - label) — wire it like this,
+by the breakout's own labels:
+
+| Breakout label | Real signal | Lichee Pi |
+|---|---|---|
+| 1 | 3V3 | 3.3V supply (connect last) |
+| 2 | SDA | Pin 4 (PE22) |
+| 3 | SCL | Pin 2 (PE21) |
+| 7 / 8 | CLK+ / CLK- | Pin 25 / 27 |
+| 10 / 11 | D1+ / D1- | Pin 21 / 23 |
+| 13 / 14 | D0+ / D0- | Pin 17 / 19 |
+| 6, 9, 12, 15 | GND | Pin 29 |
+| 4, 5 | camera GPIOs | leave open |
+
+Wired the normal way on a mirrored breakout, "pin 15" (3V3) is really
+ground — connecting 3.3V there shorts the rail — and the I2C/lane wires
+land on lane/ground pins, so the bridge never ACKs and no packets
+arrive.
+
 I2C0 (PB6/PB7) remains available for Si5351 clock generator.
 
 ### TC358743 Power
