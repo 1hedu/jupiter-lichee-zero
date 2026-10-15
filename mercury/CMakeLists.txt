@@ -95,6 +95,13 @@ else()
         DVI_SYMBOLS_PER_WORD=2
     )
     target_link_libraries(mercury libdvi hardware_vreg)
+    # Run from SRAM, as SpotPear's and PicoDVI's own builds do: the boot
+    # stage copies the program out of flash, so the 252 MHz overclock
+    # never drives XIP. On the Pico 2 W the flash runs at clk_sys / 2
+    # with sampling delays tuned for 150 MHz — overclocking while
+    # executing from flash puts it at 126 MHz and can corrupt fetches
+    # the instant the clock switches (chip dies before USB comes up).
+    pico_set_binary_type(mercury copy_to_ram)
 endif()
 
 pico_enable_stdio_usb(mercury 1)
