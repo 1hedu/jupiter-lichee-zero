@@ -30,22 +30,36 @@
 #define CSI_BASE        0x01CB0000
 #define MIPI_CSI_BASE   0x01CB1000
 
-/* CSI registers */
-#define CSI_EN          0x000
-#define CSI_CFG         0x004
-#define CSI_CAP         0x008
-#define CSI_HSIZE       0x040
-#define CSI_VSIZE       0x044
-#define CSI_BUF_ADDR0   0x048
-#define CSI_BUF_LEN     0x050
-#define CSI_INT_EN      0x060
-#define CSI_INT_STA     0x064
+/* CSI controller registers — offsets from Linux
+ * drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_reg.h (the V3s CSI
+ * is this sun6i block). The previous map here was wrong: it read the
+ * "frame done" status from 0x64 (not a status register — it echoed the
+ * 0xFFFFFFFF written at init, so every poll reported a frame), wrote
+ * the frame height into CH_CFG (0x44, the input-format register) and
+ * the frame width into CH_FIFO0_ADDR (0x50) — the DMA destination —
+ * before switching capture on. */
+#define CSI_EN_REG          0x00    /* bit 0: enable */
+#define CSI_IF_CFG_REG      0x04
+#define CSI_CAP_REG         0x08    /* bit 1: video capture on */
+#define CSI_CH_CFG_REG      0x44    /* input/output format */
+#define CSI_CH_FIFO0_ADDR   0x50    /* DMA destination (luma/packed) */
+#define CSI_CH_INT_EN_REG   0x70
+#define CSI_CH_INT_STA_REG  0x74    /* write-1-to-clear */
+#define CSI_CH_HSIZE_REG    0x80
+#define CSI_CH_VSIZE_REG    0x84
+#define CSI_CH_BUF_LEN_REG  0x88
+#define CSI_CH_INT_FD       (1u << 1)   /* frame done (EN and STA) */
 
-#define CSI_EN_CSI_EN           (1u << 0)
-#define CSI_CFG_INPUT_FMT(x)    ((x) << 20)
-#define CSI_CFG_OUTPUT_FMT(x)   ((x) << 16)
-#define CSI_CAP_VCAP_ON         (1u << 1)
-#define CSI_INT_FRAME_DONE      (1u << 1)
+/* The MIPI CSI-2 receive path in front of CSI0 (MIPI CSI-2 controller
+ * at 0x01CB1000 + its D-PHY in RX mode) is NOT implemented yet — see
+ * mercury/README.md. Until it is, the capture functions below never
+ * touch the hardware: csi_capture_init() reports "not armed" and
+ * csi_frame_ready() always returns 0, so callers can't display
+ * uninitialised memory as a "captured frame" or aim DMA anywhere.
+ * Set to 1 only together with a working MIPI RX bring-up. */
+#ifndef MERCURY_MIPI_RX_READY
+#define MERCURY_MIPI_RX_READY 0
+#endif
 
 /* Supported capture resolutions (match Pico output) */
 #define MERCURY_RES_GB       0   /* 160×144 */
@@ -79,62 +93,37 @@ static inline void mercury_r3g3b2_to_argb(uint32_t *dst, const uint8_t *src,
     }
 }
 
-static inline void csi_clocks_init(void)
-{
-    volatile uint32_t *ccu = (volatile uint32_t *)0x01C20000;
-    ccu[0x064 / 4] |= (1u << 8) | (1u << 2);    /* bus gate: CSI + MIPI */
-    ccu[0x2C4 / 4] |= (1u << 8) | (1u << 2);    /* reset: CSI + MIPI */
-    ccu[0x134 / 4] = (1u << 31) | (0 << 24);     /* CSI module clock */
-    ccu[0x13C / 4] = (1u << 31);                  /* MIPI CSI clock */
-    ccu[0x100 / 4] |= (1u << 1);                  /* DRAM gate for CSI */
-}
+/* Clock/reset setup belongs to the MIPI RX bring-up (the CCU bits the
+ * old version set were unverified guesses) — no-op until then. */
+static inline void csi_clocks_init(void) { }
 
 /* MIPI CSI uses dedicated PHY pins — no GPIO mux needed */
 static inline void csi_gpio_init(void) { }
 
 /*
- * Initialize CSI0 for MIPI CSI-2 capture at the specified resolution.
- *
- * buf_addr: physical DRAM address, 4-byte aligned.
- * res: one of MERCURY_RES_* constants.
- *
- * TODO: MIPI PHY configuration (lane count, data rate, protocol setup).
- * Needs Linux register dump with TC358743 connected to get exact values.
+ * Arm CSI0 capture into buf_addr (physical, 4-byte aligned).
+ * Returns 0 when armed, -1 when the MIPI receive path isn't available
+ * (current state) — nothing is written to the hardware in that case.
  */
-static inline void csi_capture_init(uint32_t buf_addr, int res)
+static inline int csi_capture_init(uint32_t buf_addr, int res)
 {
-    volatile uint32_t *csi = (volatile uint32_t *)CSI_BASE;
-    uint16_t w = mercury_resolutions[res].w;
-    uint16_t h = mercury_resolutions[res].h;
-
-    csi[CSI_EN / 4] = 0;
-    csi[CSI_CFG / 4] = CSI_CFG_INPUT_FMT(0) | CSI_CFG_OUTPUT_FMT(0);
-    /* sunxi CSI: length in high half, start offset in low half */
-    csi[CSI_HSIZE / 4] = ((uint32_t)w << 16) | 0;
-    csi[CSI_VSIZE / 4] = ((uint32_t)h << 16) | 0;
-    csi[CSI_BUF_ADDR0 / 4] = buf_addr;
-    csi[CSI_BUF_LEN / 4] = w;
-    csi[CSI_INT_STA / 4] = 0xFFFFFFFF;
-    csi[CSI_INT_EN / 4] = CSI_INT_FRAME_DONE;
-    csi[CSI_EN / 4] = CSI_EN_CSI_EN;
-    csi[CSI_CAP / 4] = CSI_CAP_VCAP_ON;
+    (void)buf_addr; (void)res;
+#if MERCURY_MIPI_RX_READY
+#error "CSI0 capture setup must be written together with the MIPI RX bring-up"
+#endif
+    return -1;
 }
 
 static inline int csi_frame_ready(void)
 {
+#if MERCURY_MIPI_RX_READY
     volatile uint32_t *csi = (volatile uint32_t *)CSI_BASE;
-    uint32_t status = csi[CSI_INT_STA / 4];
-    if (status & CSI_INT_FRAME_DONE) {
-        csi[CSI_INT_STA / 4] = CSI_INT_FRAME_DONE;
+    if (csi[CSI_CH_INT_STA_REG / 4] & CSI_CH_INT_FD) {
+        csi[CSI_CH_INT_STA_REG / 4] = CSI_CH_INT_FD;     /* w1c */
         return 1;
     }
+#endif
     return 0;
-}
-
-static inline void csi_set_buffer(uint32_t buf_addr)
-{
-    volatile uint32_t *csi = (volatile uint32_t *)CSI_BASE;
-    csi[CSI_BUF_ADDR0 / 4] = buf_addr;
 }
 
 #endif
