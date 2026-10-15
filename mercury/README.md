@@ -30,43 +30,52 @@ The V3s sends a display list over SPI each frame (~2KB of triangle/quad commands
 > uses for the RGB LCD — a direct Pico→PE parallel hookup is not
 > possible alongside the display.
 
-## Wiring — Pico 2 / Pico 2 W, HSTX DVI route (default)
+## Wiring — Pico 2 W + SpotPear Pico HDMI board (default)
 
-The RP2350's **HSTX** peripheral TMDS-encodes in hardware, so the scan-
-out core does no pixel work at all (ping-pong DMA feeds the HSTX FIFO).
-HSTX exists **only on GP12–GP19**, so the DVI/HDMI connector board must
-put all four TMDS pairs there. Default layout = Pico DVI Sock:
+The SpotPear board plugs onto the Pico (HDMI connector + 270 Ω TMDS
+resistors on board). Its schematic routes TMDS to **GP8–GP15** and HDMI
+DDC/CEC to GP18–GP20, so the V3s SPI link uses SPI0 on GP4–7. V3s-side
+pins follow docs/PIN_OVERLAYS.md **Overlay 4**.
 
 ```
-Pico 2 GPIO  Signal            Goes to
-───────────  ──────            ───────
-GP12/GP13    TMDS D0± (blue)   HDMI connector → TC358743 (or a monitor)
-GP14/GP15    TMDS CLK±             "
-GP16/GP17    TMDS D2± (red)        "
-GP18/GP19    TMDS D1± (green)      "
-GP8          SPI1 RX (MOSI)    V3s PC3 (SPI0 MOSI)
-GP9          SPI1 CSn          V3s PC2 (SPI0 CS)
-GP10         SPI1 SCK          V3s PC1 (SPI0 CLK)
-GP11         SPI1 TX (MISO)    optional readback
-GND          GND               common ground
+Pico GPIO    Signal              Goes to
+─────────    ──────              ───────
+GP8-GP15     TMDS (SpotPear)     HDMI → TC358743 (or a monitor)
+GP4          SPI0 RX (MOSI)      V3s PC3  (header pin 24)
+GP5          SPI0 CSn            V3s PC2  (header pin 28)
+GP6          SPI0 SCK            V3s PC1  (header pin 22)
+GP7          SPI0 TX (MISO)      unused
+GND          GND                 common ground
+
+TC358743 I2C:  V3s PE21 = SCL, PE22 = SDA (TWI1)
 ```
 
-Each TMDS line needs a ~270 Ω series resistor (DVI Sock-style boards
-include them). Other board layouts: `-DMERCURY_HSTX_BOARD=AMY` for
-Amy's DVI board (GP12-19, inverted pairs), or define
-`MERCURY_HSTX_D0/D1/D2/CLK/INVERT` for anything else whose pairs all
-sit within GP12-19. A board wired elsewhere (e.g. Pimoroni's Demo Base,
-GP6-13) cannot use HSTX. The Pico 2 W's radio pins (GP23/24/25/29) are
-untouched — Mercury doesn't use wireless.
+This board's pairs sit partly outside GP12–19, so it uses the PicoDVI
+(PIO) route on the RP2350 — `clk_sys` is raised to 252 MHz at 1.20 V
+(one TMDS bit per cycle), exactly as SpotPear's own demos do.
 
-**Clock:** HSTX shifts 2 bits per `clk_hstx` cycle and the SDK ties
-`clk_hstx` to `clk_sys`, so the build pins `clk_sys` to **126 MHz**
-(252 Mbps/lane → 25.2 MHz pixel clock → exactly 60.0 Hz). At the
-RP2350's 150 MHz default the same config would emit a non-standard
-~71 Hz mode. The M33 at 126 MHz still out-rasterizes the RP2040's
-M0+ comfortably (hardware divide, faster multiply).
+## Other DVI boards — HSTX hardware DVI on Pico 2 / 2 W
 
-## Wiring — Pico (RP2040), PicoDVI route (`-DPICO_BOARD=pico`)
+The RP2350's **HSTX** peripheral TMDS-encodes in hardware (zero CPU
+pixel work), but exists **only on GP12–GP19**. Boards wired entirely
+there use it: `-DMERCURY_DVI_BOARD=DVI_SOCK` (Pico DVI Sock) or `AMY`.
+
+```
+Pico 2 GPIO  Signal            (DVI Sock layout)
+───────────  ──────
+GP12/GP13    TMDS D0± (blue)
+GP14/GP15    TMDS CLK±
+GP16/GP17    TMDS D2± (red)
+GP18/GP19    TMDS D1± (green)
+GP8-GP11     SPI1 RX / CSn / SCK / TX  (V3s link)
+```
+
+**HSTX clock:** HSTX shifts 2 bits per `clk_hstx` cycle and the SDK
+ties `clk_hstx` to `clk_sys`, so these builds pin `clk_sys` to
+**126 MHz** (252 Mbps/lane → exactly 60.0 Hz). At the RP2350's
+150 MHz default the same config would emit a non-standard ~71 Hz mode.
+
+## Wiring — Pico (RP2040), original hand wiring (`-DPICO_BOARD=pico -DMERCURY_DVI_BOARD=LEGACY_GP0`)
 
 ```
 Pico GPIO    Signal            Goes to
@@ -105,7 +114,9 @@ Power: Pico VSYS from V3s 5V, or separate USB power. Both boards share a common 
 
 ## Pin Rationale
 
-- **GP12-GP19 for DVI on RP2350**: the only pins HSTX can drive
+- **GP8-GP15 (SpotPear)**: fixed by the board; GP4-7 SPI0 avoids it
+  and its DDC lines on GP18-20
+- **GP12-GP19 for HSTX DVI on RP2350**: the only pins HSTX can drive
 - **GP0-GP7 for output data on RP2040 / DVP**: consecutive GPIO bank —
   required both by PicoDVI's serialiser and by PIO `out pins, 8`
 - **GP8-GP10 (DVP) for PCLK/HREF/VSYNC**: PCLK is PIO side-set,
@@ -179,15 +190,17 @@ The cube uses painter's algorithm (back-to-front face sorting) and integer-only 
 ```bash
 export PICO_SDK_PATH=/path/to/pico-sdk          # SDK 2.1.1 or newer
 cd mercury && mkdir build && cd build
-cmake ..                                  # Pico 2 W: HSTX DVI (default)
-# cmake -DMERCURY_HSTX_BOARD=AMY ..       #   ...Amy's DVI board layout
-# cmake -DPICO_BOARD=pico2 ..             #   plain Pico 2: same firmware path
+git clone https://github.com/Wren6991/PicoDVI external/PicoDVI  # PicoDVI boards
+cmake ..                                  # Pico 2 W + SpotPear (default)
+# cmake -DMERCURY_DVI_BOARD=DVI_SOCK ..   #   DVI Sock: HSTX, no PicoDVI needed
+# cmake -DPICO_BOARD=pico ..              #   RP2040 Pico (+ any board preset)
 # cmake -DMERCURY_ROUTE_DVP=ON ..         #   parallel DVP route instead
 make
 ```
 
-For the RP2040 Pico instead: `git clone https://github.com/Wren6991/PicoDVI
-external/PicoDVI` (from `mercury/`), then `cmake -DPICO_BOARD=pico ..`.
+Board presets (`MERCURY_DVI_BOARD`): `SPOTPEAR`, `DVI_SOCK`, `AMY`,
+`LEGACY_GP0` (Mercury's original GP0–7 hand wiring) — see
+include/jupiter32x.h.
 The SDK fetches and builds `picotool` on first configure for RP2350
 targets (set `PICOTOOL_FETCH_FROM_GIT_PATH` to share it across builds).
 

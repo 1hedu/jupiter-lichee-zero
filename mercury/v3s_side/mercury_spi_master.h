@@ -11,13 +11,15 @@
  * spi-sun6i.c register layout).
  *
  * Pins (Linux pinctrl-sun8i-v3s.c, function 3 = "spi0"):
- *   PC0 = SPI0_MISO   (unused — the Pico's TX is optional readback)
- *   PC1 = SPI0_CLK
- *   PC2 = SPI0_CS
- *   PC3 = SPI0_MOSI
+ *   PC1 = SPI0_CLK  -> Pico SCK  (2.54mm header pin 22)
+ *   PC3 = SPI0_MOSI -> Pico RX   (header pin 24)
+ *   PC2 = SPI0_CS   -> Pico CSn  (header pin 28) — the controller's
+ *   own chip select, asserted for exactly one burst.
+ *   (-DMERCURY_SPI_CS_GPIO_PC0 instead drives PC0 — header pin 26,
+ *   SPI0_MISO in hardware — as a GPIO chip select, for boards wired
+ *   that way.)
  * These are the SPI-flash pads on the Lichee Pi Zero. Boards with the
- * optional NOR flash populated share the bus — keep the flash CS
- * (same PC2) in mind if yours has one soldered.
+ * optional NOR flash populated share the bus — its CS is PC2.
  *
  * Bus clock: 24 MHz HOSC / (2*(CDR2+1)) = 6 MHz. The RP2040 slave
  * tops out around sysclk/12 ≈ 11 MHz, so 6 MHz has comfortable margin;
@@ -72,10 +74,18 @@ static inline void mercury_spi_init(void)
     ccu[0x2C0 / 4] |= (1u << 20);          /* BUS_SOFT_RST0:  SPI0 */
     ccu[0x0A0 / 4]  = (1u << 31);          /* SPI0_CLK: gate on, src HOSC, /1 */
 
-    /* Pinmux: PC0-PC3 -> function 3 (spi0). PC_CFG0 covers PC0-7. */
+    /* Pinmux (PC_CFG0 covers PC0-7, 4 bits each): CLK/MOSI -> spi0. */
     uint32_t cfg = pio[0x48 / 4];
+#ifndef MERCURY_SPI_CS_GPIO_PC0
+    cfg &= ~0x0000FFF0u;
+    cfg |=  0x00003330u;            /* PC1 CLK, PC2 CS, PC3 MOSI = func 3 */
+#else
     cfg &= ~0x0000FFFFu;
-    cfg |=  0x00003333u;
+    cfg |=  0x00003031u;            /* PC0 = GPIO out (CS), PC1/PC3 = spi0,
+                                     * PC2 left as GPIO input (flash CS
+                                     * pad stays inactive/high-Z) */
+    pio[0x58 / 4] |= 1u;            /* PC_DAT: CS idle high */
+#endif
     pio[0x48 / 4] = cfg;
 
     /* Controller: soft reset, then master mode + transmit-pause. */
@@ -99,6 +109,11 @@ static inline int mercury_spi_send_raw(const uint8_t *a, uint32_t alen,
                                        const uint8_t *b, uint32_t blen)
 {
     uint32_t total = alen + blen;
+#ifdef MERCURY_SPI_CS_GPIO_PC0
+    volatile uint32_t *pc_dat = (volatile uint32_t *)(0x01C20800 + 0x58);
+    *pc_dat &= ~1u;                 /* assert CS (PC0 low) */
+#endif
+    int rc = -1;
 
     MSPI(MSPI_FCR) = MSPI_FCR_TF_RST | MSPI_FCR_RF_RST;
     for (volatile int i = 0; i < 10000; i++)
@@ -122,17 +137,23 @@ static inline int mercury_spi_send_raw(const uint8_t *a, uint32_t alen,
             sent++;
             spins = 0;
         } else if (++spins > 20000000u) {
-            return -1;
+            goto out;
         }
     }
 
     for (uint32_t w = 0; w < 20000000u; w++) {
         if (MSPI(MSPI_ISR) & MSPI_ISR_TC) {
             MSPI(MSPI_ISR) = 0xFFFFFFFFu;
-            return 0;
+            rc = 0;
+            break;
         }
     }
-    return -1;
+out:
+#ifdef MERCURY_SPI_CS_GPIO_PC0
+    *pc_dat |= 1u;                  /* release CS — the Pico's receiver
+                                     * frames each display list on it */
+#endif
+    return rc;
 }
 
 /* Send a display list with the Pico's framing: u16 LE length + payload,

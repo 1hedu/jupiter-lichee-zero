@@ -16,6 +16,8 @@ static PIO  csi_pio = pio0;
 static uint pixel_sm;
 static int  dma_chan;
 
+void j32x_scanout_preinit(void) { }   /* default clocks are fine */
+
 void j32x_scanout_start(void)
 {
     uint offset = pio_add_program(csi_pio, &csi_pixel_program);

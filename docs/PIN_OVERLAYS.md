@@ -152,9 +152,9 @@ Boot sequence:
 
 ```
 Pico (via TC358743 HDMI-to-CSI bridge):
-  PC0       SPI CS (to Pico GP9)
-  PC1       SPI CLK (to Pico GP10)
-  PC3       SPI MOSI (to Pico GP8)
+  PC2       SPI CS (to Pico GP5)
+  PC1       SPI CLK (to Pico GP6)
+  PC3       SPI MOSI (to Pico GP4)
   MCSI-D0P/N  MIPI CSI-2 Data 0      (2.54mm pins 17/19)
   MCSI-D1P/N  MIPI CSI-2 Data 1      (2.54mm pins 21/23)
   MCSI-CKP/N  MIPI CSI-2 Clock       (2.54mm pins 25/27)

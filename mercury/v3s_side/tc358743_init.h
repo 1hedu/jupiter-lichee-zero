@@ -12,13 +12,16 @@
  *   Refclk:   27 MHz (the B101's onboard oscillator; change
  *             TC_REFCLK_HZ if your bridge board differs)
  *
- * I2C: TWI0 on PB6 (SCL) / PB7 (SDA), 100 kHz — same bus + state
- * machine as lib/si5351.c. TC358743 uses 16-bit register addresses
- * (MSB first) and little-endian data for 16/32-bit registers.
+ * I2C: TWI1 on PE21 (SCL) / PE22 (SDA), 100 kHz — the bus the
+ * project's own docs/PIN_OVERLAYS.md assigns to the TC358743 in the
+ * Mercury overlay (mux 3 = i2c1 per Linux pinctrl-sun8i-v3s.c; base
+ * 0x01C2B000, CCU gate 0x06C bit 1 / reset 0x2D8 bit 1 per Linux
+ * ccu-sun8i-v3s.c + sun8i-v3s.dtsi). Same TWI state machine as
+ * lib/si5351.c. TC358743 uses 16-bit register addresses (MSB first)
+ * and little-endian data for 16/32-bit registers.
  *
- * NOTE: PB6/PB7 double as YM3438 D6/D7 in the sound examples — run the
- * bridge init before ym3438_hw_init() reclaims the pins (one-shot
- * config at boot is all the bridge needs).
+ * Pin plan = docs/PIN_OVERLAYS.md Overlay 4 (Mercury + controllers).
+ * (-DTC_USE_TWI0_PB67 selects TWI0 on PB6/PB7 for other setups.)
  *
  * The Pico never reads EDID or checks HPD, so the EDID RAM is left
  * unprogrammed and HPD stays low. If you ever feed this bridge from a
@@ -170,10 +173,14 @@
 #define TC_MASK_S_DDC5V    0x01
 
 /* ============================================================
- * TWI0 master (PB6=SCL, PB7=SDA) — same engine as lib/si5351.c,
- * extended with multi-byte transfers for 16-bit reg addresses.
+ * TWI master — same engine as lib/si5351.c, extended with multi-byte
+ * transfers for 16-bit reg addresses.
  * ============================================================ */
-#define TC_TWI_BASE     0x01C2AC00
+#ifdef TC_USE_TWI0_PB67
+#define TC_TWI_BASE     0x01C2AC00      /* TWI0 */
+#else
+#define TC_TWI_BASE     0x01C2B000      /* TWI1 (default, Mercury overlay) */
+#endif
 #define TC_TWI(reg)     (*(volatile uint32_t *)(TC_TWI_BASE + (reg)))
 #define TC_TWI_DATA     0x08
 #define TC_TWI_CNTR     0x0C
@@ -307,21 +314,36 @@ static inline void tc358743_sleep(int on)
 }
 
 /*
- * Full bridge init. Call once at boot, after the TWI0 pins are muxed
- * (this muxes them itself) and before anything else claims PB6/PB7.
+ * Full bridge init. Call once at boot (after video_init — its LCD
+ * pinmux rewrites PE_CFG2). Muxes its own TWI pins.
  * Returns 0 on success, -1 if the chip doesn't answer / wrong ID.
  */
 static inline int tc358743_init(void)
 {
-    /* --- TWI0 setup (clock gate, PB6/PB7 mux func 2, 100 kHz) --- */
     volatile uint32_t *ccu = (volatile uint32_t *)0x01C20000;
     volatile uint32_t *pio = (volatile uint32_t *)0x01C20800;
-    ccu[0x6C / 4]  |= 1;                     /* TWI0 bus gate */
-    ccu[0x2D8 / 4] |= 1;                     /* TWI0 reset de-assert */
+#ifdef TC_USE_TWI0_PB67
+    /* --- TWI0: clock gate, PB6/PB7 mux func 2 --- */
+    ccu[0x6C / 4]  |= (1u << 0);             /* TWI0 bus gate */
+    ccu[0x2D8 / 4] |= (1u << 0);             /* TWI0 reset de-assert */
     uint32_t cfg = pio[0x24 / 4];            /* PB_CFG0: PB6, PB7 */
     cfg &= ~((0x7u << 24) | (0x7u << 28));
     cfg |=  ((0x2u << 24) | (0x2u << 28));   /* func 2 = TWI0 */
     pio[0x24 / 4] = cfg;
+#else
+    /* --- TWI1: clock gate, PE21/PE22 mux func 3, pull-ups --- */
+    ccu[0x6C / 4]  |= (1u << 1);             /* TWI1 bus gate */
+    ccu[0x2D8 / 4] |= (1u << 1);             /* TWI1 reset de-assert */
+    uint32_t cfg = pio[0x98 / 4];            /* PE_CFG2: PE16-PE23 */
+    cfg &= ~((0x7u << 20) | (0x7u << 24));   /* PE21 [22:20], PE22 [26:24] */
+    cfg |=  ((0x3u << 20) | (0x3u << 24));   /* func 3 = i2c1 */
+    pio[0x98 / 4] = cfg;
+    uint32_t pul = pio[0xB0 / 4];            /* PE_PULL1: PE16-PE31 */
+    pul &= ~((0x3u << 10) | (0x3u << 12));
+    pul |=  ((0x1u << 10) | (0x1u << 12));   /* weak pull-ups (boards
+                                              * usually add their own) */
+    pio[0xB0 / 4] = pul;
+#endif
 
     TC_TWI(TC_TWI_SRST) = 1;
     tc_delay(1000);

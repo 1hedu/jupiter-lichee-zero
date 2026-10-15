@@ -46,45 +46,58 @@
 #define J32X_DVI_X_OFFSET   ((J32X_DVI_H_ACTIVE - J32X_WIDTH) / 2)
 #define J32X_DVI_Y_OFFSET   ((J32X_DVI_V_ACTIVE - J32X_HEIGHT) / 2)
 
-/* Pin assignments — PicoDVI route (RP2040, dvi_out.c) */
-#define PIN_DVI_D2P     0       /* TMDS Data 2+ (Blue) */
-#define PIN_DVI_D2N     1       /* TMDS Data 2- */
-#define PIN_DVI_D1P     2       /* TMDS Data 1+ (Green) */
-#define PIN_DVI_D1N     3       /* TMDS Data 1- */
-#define PIN_DVI_D0P     4       /* TMDS Data 0+ (Red) */
-#define PIN_DVI_D0N     5       /* TMDS Data 0- */
-#define PIN_DVI_CLKP    6       /* TMDS Clock+ */
-#define PIN_DVI_CLKN    7       /* TMDS Clock- */
-
-/* Pin assignments — HSTX route (RP2350 Pico 2 / 2 W, hstx_dvi_out.c).
- * HSTX only exists on GP12-19, so the DVI connector board must route
- * all four TMDS pairs there. Each pair is (base, base+1); _INVERT=1
- * means base is the "-" pin. Presets (from PicoDVI's
- * common_dvi_pin_configs.h, the authoritative board table):
- *   MERCURY_HSTX_BOARD_DVI_SOCK (default) — Pico DVI Sock
- *   MERCURY_HSTX_BOARD_AMY                — Amy's DVI board
- * Or define MERCURY_HSTX_D0/D1/D2/CLK/INVERT yourself. Boards wired
- * outside GP12-19 (e.g. Pimoroni Demo Base on GP6-13) can't use HSTX.
- * The Pico 2 W's CYW43 radio uses GP23/24/25/29 — untouched here. */
-#if defined(MERCURY_HSTX_BOARD_AMY)
-#define MERCURY_HSTX_D0      14
-#define MERCURY_HSTX_D1      16
-#define MERCURY_HSTX_D2      18
-#define MERCURY_HSTX_CLK     12
-#define MERCURY_HSTX_INVERT  1
-#elif !defined(MERCURY_HSTX_D0)     /* DVI Sock */
-#define MERCURY_HSTX_D0      12
-#define MERCURY_HSTX_D1      18
-#define MERCURY_HSTX_D2      16
-#define MERCURY_HSTX_CLK     14
-#define MERCURY_HSTX_INVERT  0
+/* ============================================================
+ * DVI connector board presets — shared by both DVI routes
+ *
+ * Each TMDS pair is (base, base+1); MERCURY_DVI_INVERT=1 means base is
+ * the "-" pin. Pin tables from PicoDVI's common_dvi_pin_configs.h (the
+ * board vendors' own demo configs); SpotPear verified against its
+ * published schematic. Select with -DMERCURY_DVI_BOARD=<NAME> in CMake.
+ *
+ *   SPOTPEAR (default) SpotPear Pico HDMI board  TMDS GP8-15, inverted
+ *                      (DDC SDA/SCL/CEC also on GP18/19/20 — reserved)
+ *                      -> PicoDVI (PIO) route on Pico 2 W or Pico
+ *   DVI_SOCK           Pico DVI Sock             TMDS GP12-19
+ *   AMY                Amy's DVI board           TMDS GP12-19, inverted
+ *                      -> HSTX route on Pico 2 / 2 W, PicoDVI on Pico
+ *   LEGACY_GP0         original Mercury wiring   TMDS GP0-7
+ *
+ * HSTX (RP2350 hardware DVI) exists only on GP12-19, so it can only be
+ * used by boards whose pairs all fit there; the rest use PicoDVI.
+ * The Pico 2 W's CYW43 radio uses GP23/24/25/29 — never touched.
+ * ============================================================ */
+#if defined(MERCURY_DVI_BOARD_DVI_SOCK)
+#define MERCURY_DVI_D0      12
+#define MERCURY_DVI_D1      18
+#define MERCURY_DVI_D2      16
+#define MERCURY_DVI_CLK     14
+#define MERCURY_DVI_INVERT  0
+#elif defined(MERCURY_DVI_BOARD_AMY)
+#define MERCURY_DVI_D0      14
+#define MERCURY_DVI_D1      16
+#define MERCURY_DVI_D2      18
+#define MERCURY_DVI_CLK     12
+#define MERCURY_DVI_INVERT  1
+#elif defined(MERCURY_DVI_BOARD_LEGACY_GP0)
+#define MERCURY_DVI_D0      4
+#define MERCURY_DVI_D1      2
+#define MERCURY_DVI_D2      0
+#define MERCURY_DVI_CLK     6
+#define MERCURY_DVI_INVERT  0
+#elif !defined(MERCURY_DVI_D0)      /* SPOTPEAR (default) */
+#define MERCURY_DVI_BOARD_SPOTPEAR 1
+#define MERCURY_DVI_D0      10      /* GP10 D0-, GP11 D0+ */
+#define MERCURY_DVI_D1      12      /* GP12 D1-, GP13 D1+ */
+#define MERCURY_DVI_D2      14      /* GP14 D2-, GP15 D2+ */
+#define MERCURY_DVI_CLK     8       /* GP8 CLK-, GP9 CLK+ */
+#define MERCURY_DVI_INVERT  1
 #endif
 #define PIN_HSTX_FIRST  12
 #define PIN_HSTX_LAST   19
 
 /* Pin assignments — DVP/parallel route (csi_out.c, MERCURY_ROUTE_DVP).
  * Feeds a TC358748 DVP→CSI-2 bridge; data pins must start at GPIO0 for
- * PIO `out pins, 8`. */
+ * PIO `out pins, 8`. No DVI board on this route. */
 #define PIN_CSI_D0      0       /* D[0:7] on GPIO 0-7 */
 #define PIN_CSI_PCLK    8       /* pixel clock (PIO side-set) */
 #define PIN_CSI_HREF    9       /* line valid (CPU GPIO) */
@@ -94,20 +107,30 @@
 #define J32X_PIO_CLKDIV 5.0f
 
 /* Pin assignments — SPI slave (display list from V3s).
- * SPI1 pin groups (same on RP2040 and RP2350): RX {8,12}, CSn {9,13},
- * SCK {10,14}, TX {11,15}. The DVI and HSTX routes use group 8-11
- * (HSTX owns 12-19); the DVP route needs 8-10 for PCLK/HREF/VSYNC, so
- * SPI moves to group 12-15 there. */
-#ifdef MERCURY_ROUTE_DVP
-#define PIN_SPI_RX      12      /* SPI1 RX (MOSI from V3s) */
-#define PIN_SPI_CSN     13      /* SPI1 CSn */
-#define PIN_SPI_SCK     14      /* SPI1 SCK */
-#define PIN_SPI_TX      15      /* SPI1 TX (MISO, optional) */
+ * Hardware SPI pin groups (identical on RP2040 and RP2350):
+ *   SPI0: RX {0,4,16,20} CSn {1,5,17,21} SCK {2,6,18,22} TX {3,7,19,23}
+ *   SPI1: RX {8,12}      CSn {9,13}      SCK {10,14}     TX {11,15}
+ * SpotPear owns GP8-15 (TMDS) and GP18-20 (DDC), so SPI moves to SPI0
+ * on GP4-7 (GP0/1 stay free for UART debug). GP12-19 boards use SPI1
+ * on GP8-11; DVP needs GP8-10 for sync, so SPI1 goes to GP12-15. */
+#if defined(MERCURY_ROUTE_DVP)
+#define MERCURY_SPI_PORT spi1
+#define PIN_SPI_RX      12
+#define PIN_SPI_CSN     13
+#define PIN_SPI_SCK     14
+#define PIN_SPI_TX      15
+#elif defined(MERCURY_DVI_BOARD_SPOTPEAR)
+#define MERCURY_SPI_PORT spi0
+#define PIN_SPI_RX      4       /* SPI0 RX  (MOSI from V3s) */
+#define PIN_SPI_CSN     5       /* SPI0 CSn */
+#define PIN_SPI_SCK     6       /* SPI0 SCK */
+#define PIN_SPI_TX      7       /* SPI0 TX  (MISO, optional) */
 #else
-#define PIN_SPI_RX      8       /* SPI1 RX (MOSI from V3s) */
+#define MERCURY_SPI_PORT spi1
+#define PIN_SPI_RX      8       /* SPI1 RX  (MOSI from V3s) */
 #define PIN_SPI_CSN     9       /* SPI1 CSn */
 #define PIN_SPI_SCK     10      /* SPI1 SCK */
-#define PIN_SPI_TX      11      /* SPI1 TX (MISO, optional) */
+#define PIN_SPI_TX      11      /* SPI1 TX  (MISO, optional) */
 #endif
 
 /* Vertex coordinate clamp. Keeps the rasterizer's 16.16 edge stepping
@@ -210,6 +233,7 @@ extern j32x_state_t g_state;
 /* ============================================================
  * Scanout interface (implemented by dvi_out.c or mipi_out.c)
  * ============================================================ */
+void j32x_scanout_preinit(void); /* core 0, first in main: clocks */
 void j32x_scanout_start(void);  /* init PIO/DVI/MIPI hardware */
 void j32x_scanout_loop(void);   /* run on Core 1, never returns */
 

@@ -1,5 +1,5 @@
 /*
- * Mercury — PicoDVI Scanout
+ * Mercury — PicoDVI Scanout (PIO-serialised DVI; RP2040 or RP2350)
  *
  * Runs on Core 1. Scans out the front framebuffer as DVI (HDMI) at
  * 640×480 @ 60Hz. The active area is J32X_WIDTH × J32X_HEIGHT,
@@ -9,18 +9,23 @@
  * to the V3s. The V3s CSI receiver crops to the active area.
  *
  * Uses PicoDVI library (Wren6991/PicoDVI) for TMDS encoding and
- * PIO serialization. Pins GP0-GP7 carry the 4 TMDS differential pairs.
+ * PIO serialization. TMDS pins come from the board preset in
+ * jupiter32x.h (default: SpotPear Pico HDMI board, GP8-15).
  *
- * Scanout interface: j32x_scanout_start() + j32x_scanout_loop()
- * Swap dvi_out.c for mipi_out.c to switch to direct PIO MIPI TX.
+ * Scanout interface: j32x_scanout_preinit() (core 0, first thing in
+ * main) + j32x_scanout_start() + j32x_scanout_loop() (core 1).
  */
 
 #include <string.h>
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"     /* set_sys_clock_khz (SDK 2.x) */
+#include "hardware/vreg.h"
 #include "jupiter32x.h"
 #include "dvi.h"
 #include "dvi_timing.h"
 #include "tmds_encode.h"
+
+#define DVI_TIMING dvi_timing_640x480p_60hz
 
 /* DVI instance */
 static struct dvi_inst dvi0;
@@ -28,18 +33,32 @@ static struct dvi_inst dvi0;
 /* Black scanline for letterbox/pillarbox regions */
 static uint8_t black_line[J32X_DVI_H_ACTIVE];
 
-/* PicoDVI pin config for GP0-GP7 */
+/* PicoDVI pin config from the board preset */
 static const struct dvi_serialiser_cfg mercury_dvi_cfg = {
     .pio = pio0,
     .sm_tmds = {0, 1, 2},
-    .pins_tmds = {PIN_DVI_D0P, PIN_DVI_D1P, PIN_DVI_D2P},
-    .pins_clk = PIN_DVI_CLKP,
-    .invert_diffpairs = false,
+    .pins_tmds = {MERCURY_DVI_D0, MERCURY_DVI_D1, MERCURY_DVI_D2},
+    .pins_clk = MERCURY_DVI_CLK,
+    .invert_diffpairs = MERCURY_DVI_INVERT,
 };
+
+/* PicoDVI serialises one TMDS bit per system clock, so clk_sys MUST
+ * equal the bit clock (252 MHz for 640x480p60) — the same sequence
+ * every PicoDVI demo (incl. SpotPear's) runs first. Without it the
+ * link runs at half rate and no monitor syncs. Called on core 0
+ * before stdio/SPI init so clk_peri settles before peripherals use it.
+ * (On RP2350 this is an overclock from the 150 MHz rating, as in
+ * PicoDVI's own RP2350 builds.) */
+void j32x_scanout_preinit(void)
+{
+    vreg_set_voltage(VREG_VOLTAGE_1_20);
+    sleep_ms(10);
+    set_sys_clock_khz(DVI_TIMING.bit_clk_khz, true);
+}
 
 void j32x_scanout_start(void)
 {
-    dvi0.timing = &dvi_timing_640x480p_60hz;
+    dvi0.timing = &DVI_TIMING;
     dvi0.ser_cfg = mercury_dvi_cfg;
     dvi_init(&dvi0, next_striped_spin_lock_num(), next_striped_spin_lock_num());
 

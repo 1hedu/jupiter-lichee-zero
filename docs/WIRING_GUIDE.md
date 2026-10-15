@@ -170,34 +170,40 @@ All controllers + YM3438: yes (controllers on PF/PE, YM3438 on PB/PG).
 └──────┘         └──────────┘   FPC    └──────────┘         └──────────┘
 ```
 
-### Pico DVI Output (PicoDVI)
+### Pico DVI Output — Pico 2 W + SpotPear Pico HDMI board
 
-| Pico GPIO | Signal | HDMI Pin |
-|---|---|---|
-| GP0 | TMDS D2+ (Blue) | Pin 1 |
-| GP1 | TMDS D2- | Pin 3 |
-| GP2 | TMDS D1+ (Green) | Pin 4 |
-| GP3 | TMDS D1- | Pin 6 |
-| GP4 | TMDS D0+ (Red) | Pin 7 |
-| GP5 | TMDS D0- | Pin 9 |
-| GP6 | TMDS CLK+ | Pin 10 |
-| GP7 | TMDS CLK- | Pin 12 |
-| GND | Ground | Pins 2,5,8,11,13 |
+The SpotPear board plugs onto the Pico and provides the HDMI connector
+and 270Ω TMDS resistors — no hand wiring. It routes TMDS to GP8–GP15
+(and HDMI DDC/CEC to GP18–GP20), per its schematic:
 
-270Ω series resistors on each TMDS line (GP0-GP7).
+| Pico GPIO | Signal |
+|---|---|
+| GP8 / GP9 | TMDS CLK− / CLK+ |
+| GP10 / GP11 | TMDS D0− / D0+ |
+| GP12 / GP13 | TMDS D1− / D1+ |
+| GP14 / GP15 | TMDS D2− / D2+ |
+| GP18 / GP19 / GP20 | DDC SDA / DDC SCL / CEC (reserved) |
+
+Firmware: `mercury/` default build (`MERCURY_DVI_BOARD=SPOTPEAR`). Other
+Pico DVI boards are build presets — see mercury/README.md.
 
 ### SPI Display List (V3s → Pico)
 
 | Pico GPIO | Signal | V3s GPIO | Lichee Pi 2.54mm Pin |
 |---|---|---|---|
-| GP8 | SPI1 RX | PC3 (SPI_MOSI) | Pin 24 |
-| GP10 | SPI1 SCK | PC1 (SPI_CLK) | Pin 22 |
-| GP9 | SPI1 CSn | PC0 (SPI_MISO*) | Pin 26 |
+| GP4 | SPI0 RX | PC3 (SPI_MOSI) | Pin 24 |
+| GP6 | SPI0 SCK | PC1 (SPI_CLK) | Pin 22 |
+| GP5 | SPI0 CSn | PC2 (SPI_CS) | Pin 28 |
 | GND | Ground | GND | Pin 29 |
 
-*PC0 is SPI_MISO on the V3s but we use it as chip select here.
-The V3s is SPI master — configure PC0-PC3 as SPI0 in master mode.
-Verify V3s SPI0 pin functions match before wiring.
+(The SpotPear board occupies GP8–15, so the Pico's SPI slave moved to
+SPI0 on GP4–7.)
+
+PC1/PC2/PC3 run as SPI0 (master) with the controller's own chip select —
+pin functions verified against Linux pinctrl-sun8i-v3s.c: PC1 = SPI0_CLK,
+PC2 = SPI0_CS, PC3 = SPI0_MOSI (all mux 3). (An earlier revision put CS on
+PC0, which is SPI0_MISO; build with -DMERCURY_SPI_CS_GPIO_PC0 if a board
+is already wired that way.)
 
 ### TC358743 → V3s MIPI CSI-2
 
@@ -257,7 +263,7 @@ If not, supply 3.3V from Lichee Pi 2.54mm pin 15 (3V0).
 | PE21 | 2.54mm pin 2 | I2C1 SCK (TC358743) |
 | PE22 | 2.54mm pin 4 | I2C1 SDA (TC358743) |
 | **SPI to Pico** | | |
-| PC0 | 2.54mm pin 26 | SPI CS |
+| PC2 | 2.54mm pin 28 | SPI CS |
 | PC1 | 2.54mm pin 22 | SPI CLK |
 | PC3 | 2.54mm pin 24 | SPI MOSI |
 | **MIPI CSI-2 (TC358743)** | | |

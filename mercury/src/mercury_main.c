@@ -160,6 +160,9 @@ static void self_test_frame(uint8_t angle)
  * ============================================================ */
 int main(void)
 {
+    /* Clocks first: the PicoDVI route needs clk_sys = 252 MHz before
+     * any peripheral (USB stdio, SPI) is brought up on clk_peri. */
+    j32x_scanout_preinit();
     stdio_init_all();
 
     /* Init state */

@@ -11,7 +11,8 @@
  *   - V3s deasserts CSn when done
  *
  * Non-blocking: returns -1 immediately if no CS assertion detected.
- * Uses hardware SPI1 in slave mode.
+ * Uses a hardware SPI block (port + pins from the board preset in
+ * jupiter32x.h) in slave mode.
  */
 
 #include "pico/stdlib.h"
@@ -19,11 +20,11 @@
 #include "hardware/structs/spi.h"
 #include "jupiter32x.h"
 
-#define SPI_PORT    spi1
+#define SPI_PORT    MERCURY_SPI_PORT   /* from the board preset */
 
 void j32x_spi_init(void)
 {
-    /* Init SPI1 in slave mode */
+    /* Init the preset SPI block in slave mode */
     spi_init(SPI_PORT, 25 * 1000 * 1000);  /* 25MHz max */
     spi_set_slave(SPI_PORT, true);
     spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);

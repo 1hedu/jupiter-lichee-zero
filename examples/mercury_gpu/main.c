@@ -26,9 +26,10 @@
  *   UI0 = V3s HUD with per-pixel alpha on top
  * — the 32X arrangement: 2D console layers around a coprocessor's 3D.
  *
- * Wiring (see mercury/README.md):
- *   SPI:  V3s PC1=CLK PC2=CS PC3=MOSI  →  Pico GP10=SCK GP9=CSn GP8=RX
- *   I2C:  V3s PB6=SCL PB7=SDA          →  bridge TC358743 (addr 0x0F)
+ * Wiring — docs/PIN_OVERLAYS.md Overlay 4, Pico 2 W + SpotPear HDMI:
+ *   SPI:  V3s PC1=CLK PC2=CS PC3=MOSI  →  Pico GP6=SCK GP5=CSn GP4=RX
+ *   I2C:  V3s PE21=SCL PE22=SDA (TWI1) →  bridge TC358743 (addr 0x0F)
+ * (Other Pico DVI boards: see the board presets in mercury/README.md.)
  *
  * Build: make GAME=examples/mercury_gpu/main.c
  */
@@ -370,6 +371,9 @@ int main(void)
     pmu_init();
     video_init();
     input_init(INPUT_N64);
+    init_sin();             /* cube rotation table — without it every
+                             * vertex projects to one point (zero-area
+                             * tris: the Pico would draw nothing) */
 
     uart_puts("\n=== Mercury GPU bring-up (V3s side) ===\n");
 

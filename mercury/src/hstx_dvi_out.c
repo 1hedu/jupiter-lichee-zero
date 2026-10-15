@@ -79,6 +79,10 @@ static void configure_channel(uint ch, uint chain_to,
     dma_channel_configure(ch, &c, &hstx_fifo_hw->fifo, addr, words, false);
 }
 
+/* clk_sys = 126 MHz is fixed at compile time (CMakeLists), so the SDK's
+ * own runtime_init_clocks already set it before main(). */
+void j32x_scanout_preinit(void) { }
+
 void j32x_scanout_start(void)
 {
     /* TMDS encoder: 8bpp R3G3B2 (see header comment) */
@@ -111,18 +115,18 @@ void j32x_scanout_start(void)
      * the INV flag — base+1 normally, base on inverted boards. With
      * the DVI Sock default this reproduces pico-examples exactly:
      * clock on bits 2/3, lanes 0/1/2 on bits 0/6/4. */
-    _Static_assert(MERCURY_HSTX_CLK >= 12 && MERCURY_HSTX_CLK <= 18 &&
-                   MERCURY_HSTX_D0  >= 12 && MERCURY_HSTX_D0  <= 18 &&
-                   MERCURY_HSTX_D1  >= 12 && MERCURY_HSTX_D1  <= 18 &&
-                   MERCURY_HSTX_D2  >= 12 && MERCURY_HSTX_D2  <= 18,
+    _Static_assert(MERCURY_DVI_CLK >= 12 && MERCURY_DVI_CLK <= 18 &&
+                   MERCURY_DVI_D0  >= 12 && MERCURY_DVI_D0  <= 18 &&
+                   MERCURY_DVI_D1  >= 12 && MERCURY_DVI_D1  <= 18 &&
+                   MERCURY_DVI_D2  >= 12 && MERCURY_DVI_D2  <= 18,
                    "HSTX pairs must sit entirely within GP12-19");
-    const uint32_t inv_p = MERCURY_HSTX_INVERT ? HSTX_CTRL_BIT0_INV_BITS : 0;
-    const uint32_t inv_n = MERCURY_HSTX_INVERT ? 0 : HSTX_CTRL_BIT0_INV_BITS;
-    int ck = MERCURY_HSTX_CLK - 12;
+    const uint32_t inv_p = MERCURY_DVI_INVERT ? HSTX_CTRL_BIT0_INV_BITS : 0;
+    const uint32_t inv_n = MERCURY_DVI_INVERT ? 0 : HSTX_CTRL_BIT0_INV_BITS;
+    int ck = MERCURY_DVI_CLK - 12;
     hstx_ctrl_hw->bit[ck    ] = HSTX_CTRL_BIT0_CLK_BITS | inv_p;
     hstx_ctrl_hw->bit[ck + 1] = HSTX_CTRL_BIT0_CLK_BITS | inv_n;
     static const int lane_pin[3] = {
-        MERCURY_HSTX_D0, MERCURY_HSTX_D1, MERCURY_HSTX_D2
+        MERCURY_DVI_D0, MERCURY_DVI_D1, MERCURY_DVI_D2
     };
     for (uint lane = 0; lane < 3; ++lane) {
         int bit = lane_pin[lane] - 12;
