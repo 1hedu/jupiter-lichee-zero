@@ -344,7 +344,10 @@ static void hud_title(volatile uint32_t *ovl)
     draw_text(ovl, LCD_W, "MERCURY GPU BRING-UP", 8, 4, 1, COL_HEAD);
 }
 
-static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
+/* bridge_state: 0 = answering, TC_ERR_* = init failed, 1 = answered at
+ * init but this second's status read wasn't ACKed */
+#define BRIDGE_I2C_LOST 1
+static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
                        uint32_t spi_sent, uint32_t spi_errs,
                        uint32_t csi_frames, const csi_mipi_status_t *ms,
                        uint32_t mipi_seen, const tc358743_diag_t *td)
@@ -355,8 +358,14 @@ static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
         ovl[i] = 0xC010141E;
 
     draw_text(ovl, LCD_W, "BRIDGE:", 8, y, 1, COL_LABEL);
-    if (!bridge_ok) {
+    if (bridge_state == TC_ERR_NOACK) {
         draw_text(ovl, LCD_W, "NO ACK", 56, y, 1, COL_BAD);
+    } else if (bridge_state == TC_ERR_ID) {
+        draw_text(ovl, LCD_W, "BAD ID", 56, y, 1, COL_BAD);
+    } else if (bridge_state == TC_ERR_VERIFY) {
+        draw_text(ovl, LCD_W, "I2C BAD", 56, y, 1, COL_BAD);
+    } else if (bridge_state == BRIDGE_I2C_LOST) {
+        draw_text(ovl, LCD_W, "I2C LOST", 56, y, 1, COL_BAD);
     } else {
         draw_text(ovl, LCD_W, "TMDS", 56, y, 1,
                   (st & TC_MASK_S_TMDS)     ? COL_OK : COL_DIM);
@@ -462,9 +471,26 @@ int main(void)
     video_vi1_init(CAP_X, CAP_Y, MERC_W, MERC_H);
 
     /* --- 1. Bridge: configured, video muted until the receiver is up --- */
-    int bridge_ok = (tc358743_init() == 0);
-    uart_puts(bridge_ok ? "[mercury] TC358743 init OK\n"
-                        : "[mercury] TC358743 NO ACK / bad chip id\n");
+    int bridge_rc = tc358743_init();
+    int bridge_ok = (bridge_rc == 0);
+    switch (bridge_rc) {
+    case 0:
+        uart_puts("[mercury] TC358743 init OK at I2C 0x");
+        uart_puthex(tc_i2c_addr); uart_puts("\n");
+        break;
+    case TC_ERR_NOACK:
+        uart_puts("[mercury] TC358743: no ACK at 0x0F or 0x1F "
+                  "(SDA/SCL, power, pull-ups?)\n");
+        break;
+    case TC_ERR_ID:
+        uart_puts("[mercury] TC358743: something answered but CHIPID "
+                  "isn't 0x00xx\n");
+        break;
+    default:
+        uart_puts("[mercury] TC358743: register write didn't read back "
+                  "(I2C unreliable)\n");
+        break;
+    }
 
     /* --- 2. SPI link --- */
     mercury_spi_init();
@@ -526,15 +552,20 @@ int main(void)
 
         /* 1 Hz status refresh on the UI0 overlay */
         if ((frame++ & 63) == 0) {
+            int bridge_state = bridge_rc;
             if (bridge_ok) {
-                st = tc358743_status();
+                if (tc358743_status_rd(&st)) {
+                    st = 0;
+                    bridge_state = BRIDGE_I2C_LOST;
+                }
                 td = tc358743_diag();
             }
             ms = csi_mipi_status();
             mipi_seen = ms.pending;
-            hud_status(ovl, bridge_ok, st, spi_sent, spi_errs,
+            hud_status(ovl, bridge_state, st, spi_sent, spi_errs,
                        csi_frames, &ms, mipi_seen, &td);
             uart_puts("[mercury] status=");  uart_puthex(st);
+            if (bridge_state == BRIDGE_I2C_LOST) uart_puts("(I2C LOST)");
             uart_puts(" spi=");   uart_putdec(spi_sent);
             uart_puts(" errs=");  uart_putdec(spi_errs);
             uart_puts(" csi=");   uart_putdec(csi_frames);

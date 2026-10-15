@@ -45,7 +45,12 @@
 /* ============================================================
  * Board configuration
  * ============================================================ */
-#define TC_I2C_ADDR     0x0F        /* B101 default (7-bit) */
+/* 7-bit address is strapped by the INT pin at reset: 0x0F (low, the
+ * B101 default) or 0x1F (high). tc358743_init() probes both. */
+#define TC_I2C_ADDR_LO  0x0F
+#define TC_I2C_ADDR_HI  0x1F
+static uint8_t tc_i2c_addr = TC_I2C_ADDR_LO;
+#define TC_I2C_ADDR     tc_i2c_addr
 #define TC_REFCLK_HZ    27000000u
 #define TC_CSI_LANES    2           /* V3s MIPI has 2 data lanes */
 
@@ -344,8 +349,14 @@ static inline void tc358743_sleep(int on)
 /*
  * Full bridge init. Call once at boot (after video_init — its LCD
  * pinmux rewrites PE_CFG2). Muxes its own TWI pins.
- * Returns 0 on success, -1 if the chip doesn't answer / wrong ID.
+ * Returns 0 on success; TC_ERR_NOACK if nothing answers at 0x0F or 0x1F;
+ * TC_ERR_ID if something answers but isn't a TC358743; TC_ERR_VERIFY
+ * if a register write doesn't read back (flaky bus).
  */
+#define TC_ERR_NOACK   (-1)
+#define TC_ERR_ID      (-2)
+#define TC_ERR_VERIFY  (-3)
+
 static inline int tc358743_init(void)
 {
     volatile uint32_t *ccu = (volatile uint32_t *)0x01C20000;
@@ -379,9 +390,19 @@ static inline int tc358743_init(void)
     TC_TWI(TC_TWI_CCR)  = (2 << 3) | 11;     /* ~100 kHz */
     TC_TWI(TC_TWI_CNTR) = TC_TWI_BUS_EN;
 
-    /* --- Who's there? CHIPID high byte must be 0x00 --- */
-    uint16_t id = tc_rd16(TC_CHIPID);
-    if ((id & 0xFF00) != 0x0000) return -1;
+    /* --- Who's there? Linux's probe test: the CHIPID read must SUCCEED
+     *     (ACKed) and its high byte be 0x00. Checking the value alone
+     *     isn't enough — a failed read returns 0 too, which is how an
+     *     unanswered bus used to pass as "bridge OK". --- */
+    static const uint8_t addrs[2] = { TC_I2C_ADDR_LO, TC_I2C_ADDR_HI };
+    uint8_t idb[2];
+    int found = 0;
+    for (int i = 0; i < 2 && !found; i++) {
+        tc_i2c_addr = addrs[i];
+        found = (tc_rd(TC_CHIPID, idb, 2) == 0);
+    }
+    if (!found) return TC_ERR_NOACK;
+    if (idb[1] != 0x00) return TC_ERR_ID;     /* CHIPID[15:8] = 0x00 */
 
     /* --- initial_setup: hold IR + CEC in reset, reset CSI-TX + HDMI-RX,
      *     leave sleep --- */
@@ -391,6 +412,12 @@ static inline int tc358743_init(void)
     tc358743_sleep(0);
 
     tc_wr16(TC_FIFOCTL, 374);   /* CSI FIFO level — driver's safe value */
+    {
+        /* write/readback proves the bus carries data both ways */
+        uint8_t fb[2] = {0, 0};
+        if (tc_rd(TC_FIFOCTL, fb, 2) || (fb[0] | (fb[1] << 8)) != 374)
+            return TC_ERR_VERIFY;
+    }
 
     /* --- set_ref_clk (27 MHz) --- */
     uint32_t sys_freq = TC_REFCLK_HZ / 10000;          /* 2700 */
@@ -571,6 +598,13 @@ static inline tc358743_diag_t tc358743_diag(void)
 static inline uint8_t tc358743_status(void)
 {
     return tc_rd8(TC_SYS_STATUS);
+}
+
+/* Same, but says whether the read was ACKed: 0 = ok, -1 = I2C failed
+ * (a bare 0x00 status can't be told apart from "no HDMI at all"). */
+static inline int tc358743_status_rd(uint8_t *st)
+{
+    return tc_rd(TC_SYS_STATUS, st, 1);
 }
 
 #endif
