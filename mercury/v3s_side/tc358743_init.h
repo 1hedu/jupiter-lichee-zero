@@ -220,6 +220,7 @@ static uint8_t tc_i2c_addr = TC_I2C_ADDR_LO;
 #define TC_TWI_STAT     0x10
 #define TC_TWI_CCR      0x14
 #define TC_TWI_SRST     0x18
+#define TC_TWI_LCR      0x20            /* line control: [4] SDA, [5] SCL state */
 #define TC_TWI_BUS_EN   (1 << 6)
 #define TC_TWI_M_STA    (1 << 5)
 #define TC_TWI_M_STP    (1 << 4)
@@ -353,6 +354,7 @@ static inline void tc358743_sleep(int on)
  * TC_ERR_ID if something answers but isn't a TC358743; TC_ERR_VERIFY
  * if a register write doesn't read back (flaky bus).
  */
+static uint8_t tc_bus_lines;      /* idle levels at init: bit0 SDA, bit1 SCL */
 #define TC_ERR_NOACK   (-1)
 #define TC_ERR_ID      (-2)
 #define TC_ERR_VERIFY  (-3)
@@ -387,8 +389,19 @@ static inline int tc358743_init(void)
     TC_TWI(TC_TWI_SRST) = 1;
     tc_delay(1000);
     TC_TWI(TC_TWI_SRST) = 0;
-    TC_TWI(TC_TWI_CCR)  = (2 << 3) | 11;     /* ~100 kHz */
+    /* SCL = APB2 / (10 * (M+1) * 2^N) (Linux i2c-mv64xxx, sun6i
+     * variant): M=11 [6:3], N=2 [2:0] -> 50 kHz from 24 MHz. Slow on
+     * purpose: bridge boards made for the Pi often have no I2C pull-ups
+     * of their own (the Pi has 1.8k), and the V3s's internal ones are
+     * weak. (The old value, (2 << 3) | 11, overlapped the fields.) */
+    TC_TWI(TC_TWI_CCR)  = (11u << 3) | 2u;
     TC_TWI(TC_TWI_CNTR) = TC_TWI_BUS_EN;
+
+    /* Idle line levels before any transfer — both must read high.
+     * A low line means no pull-up, a short, or an unpowered chip
+     * clamping it through its protection diodes. */
+    tc_delay(10000);
+    tc_bus_lines = (uint8_t)((TC_TWI(TC_TWI_LCR) >> 4) & 3u);
 
     /* --- Who's there? Linux's probe test: the CHIPID read must SUCCEED
      *     (ACKed) and its high byte be 0x00. Checking the value alone

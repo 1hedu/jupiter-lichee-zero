@@ -359,7 +359,14 @@ static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
 
     draw_text(ovl, LCD_W, "BRIDGE:", 8, y, 1, COL_LABEL);
     if (bridge_state == TC_ERR_NOACK) {
+        /* + the idle line levels: both must be HI */
         draw_text(ovl, LCD_W, "NO ACK", 56, y, 1, COL_BAD);
+        draw_text(ovl, LCD_W, "SDA:", 100, y, 1, COL_LABEL);
+        draw_text(ovl, LCD_W, (tc_bus_lines & 1) ? "HI" : "LO", 124, y, 1,
+                  (tc_bus_lines & 1) ? COL_OK : COL_BAD);
+        draw_text(ovl, LCD_W, "SCL:", 142, y, 1, COL_LABEL);
+        draw_text(ovl, LCD_W, (tc_bus_lines & 2) ? "HI" : "LO", 166, y, 1,
+                  (tc_bus_lines & 2) ? COL_OK : COL_BAD);
     } else if (bridge_state == TC_ERR_ID) {
         draw_text(ovl, LCD_W, "BAD ID", 56, y, 1, COL_BAD);
     } else if (bridge_state == TC_ERR_VERIFY) {
@@ -479,8 +486,16 @@ int main(void)
         uart_puthex(tc_i2c_addr); uart_puts("\n");
         break;
     case TC_ERR_NOACK:
-        uart_puts("[mercury] TC358743: no ACK at 0x0F or 0x1F "
-                  "(SDA/SCL, power, pull-ups?)\n");
+        uart_puts("[mercury] TC358743: no ACK at 0x0F or 0x1F\n");
+        uart_puts("[mercury]   idle lines: SDA=");
+        uart_puts((tc_bus_lines & 1) ? "high" : "LOW");
+        uart_puts(" SCL=");
+        uart_puts((tc_bus_lines & 2) ? "high" : "LOW");
+        uart_puts((tc_bus_lines == 3)
+            ? "  -> bus idles fine: chip unpowered/in reset, or lines swapped\n"
+            : "  -> a line is held low: no pull-up, short, or unpowered chip\n");
+        uart_puts("[mercury]   APB2_CFG="); uart_puthex(*(volatile uint32_t *)0x01C20058);
+        uart_puts("\n");
         break;
     case TC_ERR_ID:
         uart_puts("[mercury] TC358743: something answered but CHIPID "
