@@ -176,6 +176,7 @@ static uint8_t tc_i2c_addr = TC_I2C_ADDR_LO;
 #define TC_ADDR_CSI_ERR_HALT   0x15000000u
 #define TC_MASK_CSI_MODE   0x8000
 #define TC_MASK_TXHSMD     0x0080
+#define TC_MASK_NOL_1      0x0000
 #define TC_MASK_NOL_2      0x0002
 #define TC_MASK_INTER      0x00000004u
 #define TC_MASK_INER       0x00000200u
@@ -345,6 +346,42 @@ static inline void tc358743_sleep(int on)
     uint16_t sysctl = tc_rd16(TC_SYSCTL);
     tc_wr16(TC_SYSCTL, on ? (sysctl | TC_MASK_SLEEP)
                           : (sysctl & ~TC_MASK_SLEEP));
+}
+
+/*
+ * CSI TX setup — Linux tc358743_set_csi(): 594 Mbps D-PHY timing set
+ * (REF_02), 1 or 2 data lanes. 640x480p60 RGB888 needs 442 Mbps, so
+ * one lane at 594 carries it (Linux would pick 1 here); two halve the
+ * per-lane load. Callable again at runtime to change the lane count
+ * (resets the CSI TX block; follow with tc358743_stream_on()).
+ */
+static inline void tc358743_set_csi(int lanes)
+{
+    tc358743_reset_blocks(TC_MASK_CTXRST);
+    tc_wr32(TC_D1W_CNTRL, lanes < 2 ? 0x00000001 : 0);  /* lane disable */
+    tc_wr32(TC_D2W_CNTRL, 0x00000001);
+    tc_wr32(TC_D3W_CNTRL, 0x00000001);
+    tc_wr32(TC_LINEINITCNT,    0x00000E80);
+    tc_wr32(TC_LPTXTIMECNT,    0x00000003);
+    tc_wr32(TC_TCLK_HEADERCNT, 0x00001403);
+    tc_wr32(TC_TCLK_TRAILCNT,  0x00000000);
+    tc_wr32(TC_THS_HEADERCNT,  0x00000103);
+    tc_wr32(TC_TWAKEUP,        0x00004882);
+    tc_wr32(TC_TCLK_POSTCNT,   0x00000008);
+    tc_wr32(TC_THS_TRAILCNT,   0x00000002);
+    tc_wr32(TC_HSTXVREGCNT,    0x00000000);
+    tc_wr32(TC_HSTXVREGEN, 0x01 | 0x02 | (lanes > 1 ? 0x04 : 0)); /* CLK D0 D1 */
+    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);    /* continuous clk */
+    tc_wr32(TC_STARTCNTRL, 0x00000001);
+    tc_wr32(TC_CSI_START,  0x00000001);
+    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_CONTROL |
+            TC_MASK_CSI_MODE | TC_MASK_TXHSMD |
+            (lanes > 1 ? TC_MASK_NOL_2 : TC_MASK_NOL_1));
+    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_ERR_INTENA |
+            TC_MASK_TXBRK | TC_MASK_QUNK | TC_MASK_WCER | TC_MASK_INER);
+    tc_wr32(TC_CSI_CONFW, TC_MODE_CLEAR | TC_ADDR_CSI_ERR_HALT |
+            TC_MASK_TXBRK | TC_MASK_QUNK);
+    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_INT_ENA | TC_MASK_INTER);
 }
 
 /*
@@ -528,30 +565,7 @@ static inline int tc358743_init(void)
     tc_wr16(TC_PLLCTL1, tc_rd16(TC_PLLCTL1) | TC_MASK_CKEN);
     tc358743_sleep(0);
 
-    /* --- set_csi: 2 lanes, 594 Mbps D-PHY timing set (REF_02) --- */
-    tc358743_reset_blocks(TC_MASK_CTXRST);
-    tc_wr32(TC_D2W_CNTRL, 0x00000001);                 /* lanes 2,3 off */
-    tc_wr32(TC_D3W_CNTRL, 0x00000001);
-    tc_wr32(TC_LINEINITCNT,    0x00000E80);
-    tc_wr32(TC_LPTXTIMECNT,    0x00000003);
-    tc_wr32(TC_TCLK_HEADERCNT, 0x00001403);
-    tc_wr32(TC_TCLK_TRAILCNT,  0x00000000);
-    tc_wr32(TC_THS_HEADERCNT,  0x00000103);
-    tc_wr32(TC_TWAKEUP,        0x00004882);
-    tc_wr32(TC_TCLK_POSTCNT,   0x00000008);
-    tc_wr32(TC_THS_TRAILCNT,   0x00000002);
-    tc_wr32(TC_HSTXVREGCNT,    0x00000000);
-    tc_wr32(TC_HSTXVREGEN, 0x01 | 0x02 | 0x04);        /* CLK + D0 + D1 */
-    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);    /* continuous clk */
-    tc_wr32(TC_STARTCNTRL, 0x00000001);
-    tc_wr32(TC_CSI_START,  0x00000001);
-    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_CONTROL |
-            TC_MASK_CSI_MODE | TC_MASK_TXHSMD | TC_MASK_NOL_2);
-    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_ERR_INTENA |
-            TC_MASK_TXBRK | TC_MASK_QUNK | TC_MASK_WCER | TC_MASK_INER);
-    tc_wr32(TC_CSI_CONFW, TC_MODE_CLEAR | TC_ADDR_CSI_ERR_HALT |
-            TC_MASK_TXBRK | TC_MASK_QUNK);
-    tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_INT_ENA | TC_MASK_INTER);
+    tc358743_set_csi(TC_CSI_LANES);
 
     /* --- video stays muted (lanes idle in LP-11) until
      *     tc358743_stream_on() --- */

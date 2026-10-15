@@ -52,6 +52,10 @@
 #define MERCURY_CSI_LANE_MBPS   594     /* TC358743: 27 MHz / 4 * 88 */
 #endif
 
+/* Lanes in use; runtime-changeable (must match the bridge's
+ * tc358743_set_csi(), then csi_capture_init() again). */
+static int csi_lanes = MERCURY_CSI_LANES;
+
 #define MERCURY_CSI_SRC_W       640     /* PicoDVI frame as received */
 #define MERCURY_CSI_SRC_H       480
 
@@ -230,10 +234,10 @@ static inline void csi_dphy_rx_on(void)
 
     /* EN_DBC | RX_CLK_FORCE | per-lane RX enable ("force" bits) */
     uint32_t rx = (1u << 31) | (1u << 24);
-    for (int l = 0; l < MERCURY_CSI_LANES; l++) rx |= 1u << (20 + l);
+    for (int l = 0; l < csi_lanes; l++) rx |= 1u << (20 + l);
     DPHY_R(DPHY_RX_CTL_REG) = rx;
 
-    DPHY_R(DPHY_GCTL_REG) = (((MERCURY_CSI_LANES - 1) & 3u) << 4) | 1u;
+    DPHY_R(DPHY_GCTL_REG) = (((uint32_t)(csi_lanes - 1) & 3u) << 4) | 1u;
 }
 
 /* ============================================================
@@ -252,7 +256,7 @@ static inline void csi_mipi_ctrl_on(void)
     MCSI_R(MCSI_CTL_REG) &= ~MCSI_CTL_VERSION_EN;
 
     /* one channel, N lanes */
-    MCSI_R(MCSI_CFG_REG) = (0u << 8) | ((MERCURY_CSI_LANES - 1) & 3u);
+    MCSI_R(MCSI_CFG_REG) = (0u << 8) | ((uint32_t)(csi_lanes - 1) & 3u);
 
     /* VC n -> channel n; channel 0 takes our data type */
     MCSI_R(MCSI_VCDT_RX_REG) = (3u << 30) | (2u << 22) | (1u << 14) |

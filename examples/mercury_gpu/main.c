@@ -30,9 +30,12 @@
  *                  TX/HLT  bridge CSI transmitter sending / halted
  *                  RX      V3s receiver registers read back (DEAD =
  *                          block unclocked or held in reset)
+ *                  LN      CSI-2 data lanes in use (1 or 2)
  *                Button A restarts the link (receiver, then bridge
  *                stream); B swaps red/blue in case the bridge's RGB888
- *                byte order is the other way round.
+ *                byte order is the other way round; X (N64 C-Down)
+ *                switches 2 <-> 1 lanes — one lane only needs CLK + D0
+ *                wired right, which isolates a bad D1 pair.
  *
  * The screen itself is the README's Mercury layer stack, composited by
  * the DE2 blender in hardware:
@@ -434,7 +437,9 @@ static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
         draw_text(ovl, LCD_W, "OK", 188, y, 1, COL_OK);
     else
         draw_text(ovl, LCD_W, "DEAD", 188, y, 1, COL_BAD);
-    draw_text(ovl, LCD_W, "A:RELINK  B:SWAP R-B", 236, y, 1, COL_DIM);
+    draw_text(ovl, LCD_W, "LN:", 212, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, (uint32_t)csi_lanes, 230, y, 1, COL_OK);
+    draw_text(ovl, LCD_W, "A:RELINK B:RB X:LANES", 248, y, 1, COL_DIM);
 }
 
 /* ================================================================
@@ -550,6 +555,13 @@ int main(void)
             uart_puts("[mercury] relink\n");
             link_start(bridge_ok);
         }
+        if (input_pressed() & BTN_X) {
+            csi_lanes = (csi_lanes == 2) ? 1 : 2;
+            uart_puts("[mercury] lanes -> "); uart_putdec((uint32_t)csi_lanes);
+            uart_puts("\n");
+            if (bridge_ok) tc358743_set_csi(csi_lanes);
+            link_start(bridge_ok);
+        }
 
         /* Wait for the next captured frame (this also paces the loop
          * to the Pico's 60 Hz while frames flow; with no stream it
@@ -591,6 +603,7 @@ int main(void)
             uart_puts(" frm=");   uart_putdec(ms.frame_num);
             uart_puts(" line=");  uart_putdec(ms.line_num);
             uart_puts(" csi_sta="); uart_puthex(ms.csi_sta);
+            uart_puts(" lanes="); uart_putdec((uint32_t)csi_lanes);
             uart_puts(swap_rb ? " rb=swapped\n" : "\n");
             uart_puts("          bridge in=");  uart_putdec(td.width);
             uart_puts("x");      uart_putdec(td.height);
