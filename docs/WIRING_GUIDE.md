@@ -126,19 +126,18 @@ use one or the other, not both.
 
 1 signal wire + power + ground. Native 3.3V.
 
-| N64 Plug Pin | Signal | GPIO | Physical Location |
+| N64 plug | Signal | GPIO | Physical Location |
 |---|---|---|---|
-| Pin 1 | Data | PE20 | 2.54mm pin 5 |
-| Pin 2 | GND | — | 2.54mm pin 29 |
-| Pin 3 | VCC (3.3V) | — | 2.54mm pin 15 (3V0) |
+| **Middle pin** | Data | PE20 | 2.54mm pin 5 |
+| Outer pin | GND | — | 2.54mm pin 29 |
+| Other outer pin | VCC (3.3V) | — | 2.54mm pin 15 (3V0) |
 
-```
-N64 plug (front view):
-  ┌─────────┐
-  │ 1  2  3 │
-  │ D GND V │
-  └─────────┘
-```
+Data is always the **middle** pin. Which outer pin is GND and which is
+3.3V depends on whether you're looking at the controller's plug or a
+console socket, and which way up — on OEM controllers the wires are
+typically red = 3.3V, white = data, black = GND, but third-party pads
+vary, so check the outer pins with a meter (continuity to the cable's
+ground/shield) before powering up.
 
 ### All Controllers — Pin Summary
 
