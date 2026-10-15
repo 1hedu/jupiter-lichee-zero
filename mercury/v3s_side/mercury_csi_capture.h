@@ -214,7 +214,11 @@ static inline void csi_dphy_rx_on(void)
     uint32_t dphy_hz = csi_pll_periph0_hz() / CSI_MIPI_CLK_DIV;
     uint32_t sym = MERCURY_CSI_LANE_MBPS * 1000000u;   /* symbols/s/lane */
 
-    DPHY_R(DPHY_RX_TIME0_REG) = (255u << 24) | (255u << 16) | (255u << 8);
+    /* sync/clk-miss/LP timeouts 255 (enables off, as the BSP/Linux),
+     * + FREQ_CNT_EN (bit 1): the PHY measures the incoming HS clock
+     * into RX_TIME3[15:0] — csi_dphy_clk_mbps() reads it back. */
+    DPHY_R(DPHY_RX_TIME0_REG) = (255u << 24) | (255u << 16) | (255u << 8) |
+                                (1u << 1);
 
     /* RX_DLY and LPRST_DLY: the BSP's formulas, as Linux computes them */
     uint32_t rx_dly    = 8 * (dphy_hz / (sym / 8));
@@ -356,6 +360,18 @@ static inline uint32_t csi_wait_frame(uint32_t timeout_us)
         }
     }
     return 0;
+}
+
+/* Measured MIPI lane rate (Mbps) from the D-PHY's clock counter —
+ * aodzip's V3s driver, sun6i_dphy_det_mipi_clk(): bps = 8000 *
+ * dphy_clk / count. ~594 = the bridge's clock lane arrives intact;
+ * 0 = no HS clock seen at all (clock pair not arriving). */
+static inline uint32_t csi_dphy_clk_mbps(void)
+{
+    uint32_t cnt = DPHY_R(DPHY_RX_TIME3_REG) & 0xFFFFu;
+    if (!cnt) return 0;
+    uint32_t dphy_hz = csi_pll_periph0_hz() / CSI_MIPI_CLK_DIV;
+    return (uint32_t)((8000ull * (dphy_hz / cnt)) / 1000000ull);
 }
 
 /* Receiver sanity: do the enables we wrote read back? All-zero reads

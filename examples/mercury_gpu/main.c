@@ -31,10 +31,12 @@
  *                  RX      V3s receiver registers read back (DEAD =
  *                          block unclocked or held in reset)
  *                  LN      CSI-2 data lanes in use (1 or 2)
+ *                  CLK     MIPI rate the D-PHY measures on the clock
+ *                          pair (~594 = arriving; 0 = no HS clock)
  *                Button A restarts the link (receiver, then bridge
  *                stream); B swaps red/blue in case the bridge's RGB888
- *                byte order is the other way round; X (N64 C-Down)
- *                switches 2 <-> 1 lanes — one lane only needs CLK + D0
+ *                byte order is the other way round; Start switches
+ *                2 <-> 1 lanes — one lane only needs CLK + D0
  *                wired right, which isolates a bad D1 pair.
  *
  * The screen itself is the README's Mercury layer stack, composited by
@@ -439,7 +441,12 @@ static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
         draw_text(ovl, LCD_W, "DEAD", 188, y, 1, COL_BAD);
     draw_text(ovl, LCD_W, "LN:", 212, y, 1, COL_LABEL);
     draw_dec(ovl, LCD_W, (uint32_t)csi_lanes, 230, y, 1, COL_OK);
-    draw_text(ovl, LCD_W, "A:RELINK B:RB X:LANES", 248, y, 1, COL_DIM);
+    /* MIPI clock rate the D-PHY measures — ~594 = clock pair OK */
+    uint32_t mbps = csi_dphy_clk_mbps();
+    draw_text(ovl, LCD_W, "CLK:", 248, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, mbps, 272, y, 1,
+             (mbps > 500 && mbps < 700) ? COL_OK : COL_BAD);
+    draw_text(ovl, LCD_W, "A:RELINK B:RB START:LN", 314, y, 1, COL_DIM);
 }
 
 /* ================================================================
@@ -555,7 +562,7 @@ int main(void)
             uart_puts("[mercury] relink\n");
             link_start(bridge_ok);
         }
-        if (input_pressed() & BTN_X) {
+        if (input_pressed() & BTN_START) {           /* lane switch */
             csi_lanes = (csi_lanes == 2) ? 1 : 2;
             uart_puts("[mercury] lanes -> "); uart_putdec((uint32_t)csi_lanes);
             uart_puts("\n");
@@ -604,6 +611,9 @@ int main(void)
             uart_puts(" line=");  uart_putdec(ms.line_num);
             uart_puts(" csi_sta="); uart_puthex(ms.csi_sta);
             uart_puts(" lanes="); uart_putdec((uint32_t)csi_lanes);
+            uart_puts(" clk_mbps="); uart_putdec(csi_dphy_clk_mbps());
+            uart_puts(" (cnt="); uart_puthex(DPHY_R(DPHY_RX_TIME3_REG) & 0xFFFF);
+            uart_puts(")");
             uart_puts(swap_rb ? " rb=swapped\n" : "\n");
             uart_puts("          bridge in=");  uart_putdec(td.width);
             uart_puts("x");      uart_putdec(td.height);

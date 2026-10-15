@@ -42,8 +42,8 @@
 /* Unified button bitmask (superset of all controllers) */
 #define BTN_A       (1u << 0)
 #define BTN_B       (1u << 1)
-#define BTN_X       (1u << 2)   /* SNES, N64 (C-Down) */
-#define BTN_Y       (1u << 3)   /* SNES, N64 (C-Left) */
+#define BTN_X       (1u << 2)   /* SNES (N64 C-Down is BTN_C_DOWN) */
+#define BTN_Y       (1u << 3)   /* SNES (N64 C-Left is BTN_C_LEFT) */
 #define BTN_START   (1u << 4)
 #define BTN_SELECT  (1u << 5)   /* NES, SNES */
 #define BTN_UP      (1u << 6)
