@@ -52,7 +52,14 @@ TC358743 I2C:  V3s PE21 = SCL, PE22 = SDA (TWI1)
 
 This board's pairs sit partly outside GP12–19, so it uses the PicoDVI
 (PIO) route on the RP2350 — `clk_sys` is raised to 252 MHz at 1.20 V
-(one TMDS bit per cycle), exactly as SpotPear's own demos do.
+(one TMDS bit per cycle), exactly as SpotPear's own demos do, and the
+program runs from SRAM so the overclock never touches flash.
+
+**PicoDVI output is 2× scaled:** its 8bpp encoder pixel-doubles
+horizontally and each line is repeated twice, so the 320×224
+framebuffer fills the screen as 640×448 with thin black bars top and
+bottom. (The HSTX route below is 1:1 centered; the V3s capture side
+must match whichever route is in use.)
 
 ## Other DVI boards — HSTX hardware DVI on Pico 2 / 2 W
 

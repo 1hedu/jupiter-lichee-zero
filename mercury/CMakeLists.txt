@@ -91,7 +91,7 @@ else()
     # j32x_scanout_preinit (dvi_out.c)
     target_compile_definitions(mercury PRIVATE
         MERCURY_DVI_BOARD_${MERCURY_DVI_BOARD}=1
-        DVI_VERTICAL_REPEAT=1
+        DVI_VERTICAL_REPEAT=2
         DVI_SYMBOLS_PER_WORD=2
     )
     target_link_libraries(mercury libdvi hardware_vreg)
