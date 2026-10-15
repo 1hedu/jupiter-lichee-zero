@@ -355,6 +355,11 @@ static inline void tc358743_sleep(int on)
  * per-lane load. Callable again at runtime to change the lane count
  * (resets the CSI TX block; follow with tc358743_stream_on()).
  */
+/* Clock-lane mode: 1 = continuous HS clock (Linux's default), 0 =
+ * non-continuous — the clock lane drops to LP-11 between bursts, so
+ * the receiver re-locks every line instead of once at stream start. */
+static int tc_cont_clk = 1;
+
 static inline void tc358743_set_csi(int lanes)
 {
     tc358743_reset_blocks(TC_MASK_CTXRST);
@@ -371,7 +376,7 @@ static inline void tc358743_set_csi(int lanes)
     tc_wr32(TC_THS_TRAILCNT,   0x00000002);
     tc_wr32(TC_HSTXVREGCNT,    0x00000000);
     tc_wr32(TC_HSTXVREGEN, 0x01 | 0x02 | (lanes > 1 ? 0x04 : 0)); /* CLK D0 D1 */
-    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);    /* continuous clk */
+    tc_wr32(TC_TXOPTIONCNTRL, tc_cont_clk ? TC_MASK_CONTCLKMODE : 0);
     tc_wr32(TC_STARTCNTRL, 0x00000001);
     tc_wr32(TC_CSI_START,  0x00000001);
     tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_CONTROL |
@@ -584,9 +589,18 @@ static inline int tc358743_init(void)
 static inline void tc358743_stream_on(void)
 {
     tc_wr32(TC_TXOPTIONCNTRL, 0);
-    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);
+    if (tc_cont_clk) tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);
     tc_wr8(TC_VI_MUTE, TC_MASK_AUTO_MUTE);
     tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) | TC_MASK_VBUFEN);
+}
+
+/* Linux enable_stream(false): mute (data lanes to LP-11) and close the
+ * video buffer. Must precede tc358743_set_csi() — resetting the CSI TX
+ * with video flowing leaves it never transmitting again. */
+static inline void tc358743_stream_off(void)
+{
+    tc_wr8(TC_VI_MUTE, TC_MASK_AUTO_MUTE | TC_MASK_VI_MUTE);
+    tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) & ~TC_MASK_VBUFEN);
 }
 
 /*
@@ -609,7 +623,10 @@ static inline tc358743_diag_t tc358743_diag(void)
                           tc_rd8(TC_DE_WIDTH_H_LO));
     d.height = (uint16_t)(((tc_rd8(TC_DE_WIDTH_V_HI) & 0x1F) << 8) |
                           tc_rd8(TC_DE_WIDTH_V_LO));
-    d.csi_status = tc_rd16(TC_CSI_STATUS);
+    /* TXACT is only set mid-line: OR 16 samples (~20 ms) so "is it
+     * transmitting" doesn't depend on when the 1 Hz poll lands */
+    d.csi_status = 0;
+    for (int i = 0; i < 16; i++) d.csi_status |= tc_rd16(TC_CSI_STATUS);
     tc_rd(TC_CSI_ERR, b, 4);
     d.csi_err = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
                 ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);

@@ -31,12 +31,14 @@
  *                  RX      V3s receiver registers read back (DEAD =
  *                          block unclocked or held in reset)
  *                  LN      CSI-2 data lanes in use (1 or 2)
+ *                  CU      bridge clock-lane mode, CONT/NONC
  *                  CLK     MIPI rate the D-PHY measures on the clock
  *                          pair (~594 = arriving; 0 = no HS clock)
  *                Button A restarts the link (receiver, then bridge
  *                stream); B swaps red/blue in case the bridge's RGB888
  *                byte order is the other way round; C-Down switches
- *                2 <-> 1 lanes — one lane only needs CLK + D0
+ *                2 <-> 1 lanes; C-Up toggles the bridge's clock lane
+ *                between continuous and non-continuous — one lane only needs CLK + D0
  *                wired right, which isolates a bad D1 pair.
  *
  * The screen itself is the README's Mercury layer stack, composited by
@@ -446,7 +448,9 @@ static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
     draw_text(ovl, LCD_W, "CLK:", 248, y, 1, COL_LABEL);
     draw_dec(ovl, LCD_W, mbps, 272, y, 1,
              (mbps > 500 && mbps < 700) ? COL_OK : COL_BAD);
-    draw_text(ovl, LCD_W, "A:RELINK B:RB CD:LANES", 314, y, 1, COL_DIM);
+    draw_text(ovl, LCD_W, "CU:", 314, y, 1, COL_LABEL);
+    draw_text(ovl, LCD_W, tc_cont_clk ? "CONT" : "NONC", 332, y, 1, COL_OK);
+    draw_text(ovl, LCD_W, "CD:LN", 362, y, 1, COL_DIM);
 }
 
 /* ================================================================
@@ -458,6 +462,19 @@ static uint8_t dl_buf[512];
  * first, then the bridge's LP-11 -> HS stream start. */
 static void link_start(int bridge_ok)
 {
+    if (bridge_ok) tc358743_stream_off();
+    csi_capture_init();
+    if (bridge_ok) tc358743_stream_on();
+}
+
+/* Full relink after a lane-count or clock-mode change: stop the
+ * stream BEFORE resetting the bridge's CSI TX (Linux's order). */
+static void link_reconfigure(int bridge_ok)
+{
+    if (bridge_ok) {
+        tc358743_stream_off();
+        tc358743_set_csi(csi_lanes);
+    }
     csi_capture_init();
     if (bridge_ok) tc358743_stream_on();
 }
@@ -566,8 +583,13 @@ int main(void)
             csi_lanes = (csi_lanes == 2) ? 1 : 2;
             uart_puts("[mercury] lanes -> "); uart_putdec((uint32_t)csi_lanes);
             uart_puts("\n");
-            if (bridge_ok) tc358743_set_csi(csi_lanes);
-            link_start(bridge_ok);
+            link_reconfigure(bridge_ok);
+        }
+        if (input_pressed() & BTN_C_UP) {            /* clock-lane mode */
+            tc_cont_clk ^= 1;
+            uart_puts(tc_cont_clk ? "[mercury] clock: continuous\n"
+                                  : "[mercury] clock: non-continuous\n");
+            link_reconfigure(bridge_ok);
         }
 
         /* Wait for the next captured frame (this also paces the loop
@@ -611,6 +633,7 @@ int main(void)
             uart_puts(" line=");  uart_putdec(ms.line_num);
             uart_puts(" csi_sta="); uart_puthex(ms.csi_sta);
             uart_puts(" lanes="); uart_putdec((uint32_t)csi_lanes);
+            uart_puts(tc_cont_clk ? " clk=cont" : " clk=noncont");
             uart_puts(" clk_mbps="); uart_putdec(csi_dphy_clk_mbps());
             uart_puts(" (cnt="); uart_puthex(DPHY_R(DPHY_RX_TIME3_REG) & 0xFFFF);
             uart_puts(")");
@@ -625,6 +648,12 @@ int main(void)
             uart_puts(" vcdt=");    uart_puthex(MCSI_R(MCSI_VCDT_RX_REG));
             uart_puts(" dphy gctl="); uart_puthex(DPHY_R(DPHY_GCTL_REG));
             uart_puts(" rxctl=");   uart_puthex(DPHY_R(DPHY_RX_CTL_REG));
+            {
+                uint32_t eset, eclr;
+                csi_dphy_dbg_sample(&eset, &eclr);
+                uart_puts(" dbg ever_set="); uart_puthex(eset);
+                uart_puts(" ever_clr=");     uart_puthex(eclr);
+            }
             uart_puts(" dbg=");     uart_puthex(DPHY_R(0xF0));
             uart_puts(",");         uart_puthex(DPHY_R(0xF4));
             uart_puts(",");         uart_puthex(DPHY_R(0xF8));

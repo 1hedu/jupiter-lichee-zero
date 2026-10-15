@@ -374,6 +374,21 @@ static inline uint32_t csi_dphy_clk_mbps(void)
     return (uint32_t)((8000ull * (dphy_hz / cnt)) / 1000000ull);
 }
 
+/* D-PHY debug word (0xF0, undocumented) sampled many times: which bits
+ * were ever clear / ever set. Its low bits track the enabled lanes'
+ * idle (LP-11) state — on hardware they drop to 0 only while the
+ * bridge transmits — so "ever clear" = that lane left idle. */
+static inline void csi_dphy_dbg_sample(uint32_t *ever_set, uint32_t *ever_clr)
+{
+    uint32_t or_ = 0, and_ = 0xFFFFFFFFu;
+    for (int i = 0; i < 20000; i++) {
+        uint32_t v = DPHY_R(0xF0);
+        or_ |= v; and_ &= v;
+    }
+    *ever_set = or_;
+    *ever_clr = ~and_;
+}
+
 /* Receiver sanity: do the enables we wrote read back? All-zero reads
  * mean the block isn't clocked or is held in reset. */
 static inline int csi_rx_alive(void)
