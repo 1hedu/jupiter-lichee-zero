@@ -16,27 +16,45 @@ All pin numbers verified against the Lichee Pi Zero schematic
 
 ## Lichee Pi Zero Pin Reference
 
-### 2.54mm 30-Pin Header
+### Edge pins — the "pin N" numbers in this doc
+
+The board has **no pin numbers printed on it**. The `pin N` numbers used
+throughout this doc are a project convention over two physical rows on
+the board's left side (board face up, LCD FPC connector at the top, USB
+at the bottom), each counted top to bottom:
+
+- **Odd N** = the **1.27mm half-hole pads** on the outer left edge,
+  position (N+1)/2 from the top.
+- **Even N** = the **2.54mm row** just inside it, position N/2 from the
+  top.
+
+(An earlier revision called this one "2.54mm 30-pin header", which sent
+people looking for the MIPI pins on the 2.54mm row — they're on the
+1.27mm pads.)
 
 ```
-Left Column (odd)          Right Column (even)
-─────────────────          ──────────────────
- 1: PE1  (LCD_DE)           2: PE21 (UART1_TX)
- 3: PE0  (LCD_CLK)          4: PE22 (UART1_RX)
- 5: PE20 (CSI_FIELD)        6: PB0  (UART2_TX)
- 7: PB2  (UART2_RTS)        8: PB1  (UART2_RX)
- 9: PB3  (UART2_CTS)       10: PB4  (PWM0) ← BACKLIGHT!
-11: 1V2                    12: PB5  (PWM1)
-13: 1V8                    14: PB6  (I2C0_SCK)
-15: 3V0                    16: PB7  (I2C0_SDA)
-17: MCSI-D0P               18: PB8  (UART0_TX) ← DEBUG!
-19: MCSI-D0N               20: PB9  (UART0_RX) ← DEBUG!
-21: MCSI-D1P               22: PC1  (SPI_CLK)
-23: MCSI-D1N               24: PC3  (SPI_MOSI)
-25: MCSI-CKP               26: PC0  (SPI_MISO)
-27: MCSI-CKN               28: PC2  (SPI_CS)
-29: GND                    30: 5V
+1.27mm half-holes (odd)        2.54mm row, left side (even)
+───────────────────────        ────────────────────────────
+ 1: PE1  (LCD_DE)               2: PE21 (UART1_TX / I2C1_SCK)
+ 3: PE0  (LCD_CLK)              4: PE22 (UART1_RX / I2C1_SDA)
+ 5: PE20 (CSI_FIELD)            6: PB0  (UART2_TX)
+ 7: PB2  (UART2_RTS)            8: PB1  (UART2_RX)
+ 9: PB3  (UART2_CTS)           10: PB4  (PWM0) <- BACKLIGHT!
+11: 1V2                        12: PB5  (PWM1)
+13: 1V8                        14: PB6  (I2C0_SCK)
+15: 3V3                        16: PB7  (I2C0_SDA)
+17: MIPI D0P                   18: PB8  (UART0_TX) <- DEBUG!
+19: MIPI D0N                   20: PB9  (UART0_RX) <- DEBUG!
+21: MIPI D1P                   22: PC1  (SPI_CLK)
+23: MIPI D1N                   24: PC3  (SPI_MOSI)
+25: MIPI CKP                   26: PC0  (SPI_MISO)
+27: MIPI CKN                   28: PC2  (SPI_CS)
+29: GND                        30: 5V
 ```
+
+The right side's 2.54mm row (top to bottom): PG0-PG5, GND, 3.3V,
+KEY-ADC, PF0-PF5. The MIPI CSI-2 lanes are only on the 1.27mm pads —
+solder fine wire to them.
 
 ### J3 SIP8 Header
 
@@ -62,8 +80,8 @@ PF0-PF2 (SDC0 pins — release SD card after boot).
 | Pin 3 | OUT (strobe) | PF0 | 2.54mm — see SDC0 pins |
 | Pin 2 | CLK | PF1 | 2.54mm — see SDC0 pins |
 | Pin 4 | D0 (data) | PF2 | 2.54mm — see SDC0 pins |
-| Pin 7 | VCC (3.3V) | — | 2.54mm pin 15 (3V0) |
-| Pin 1 | GND | — | 2.54mm pin 29 (GND) |
+| Pin 7 | VCC (3.3V) | — | 1.27mm pad 15 (3V3) |
+| Pin 1 | GND | — | 1.27mm pad 29 (GND) |
 
 ```
 NES Plug (front view):
@@ -85,8 +103,8 @@ Same 3 wires as NES — same PF0-PF2 pins, 16 bits instead of 8.
 | Pin 3 | OUT (latch) | PF0 | same as NES |
 | Pin 2 | CLK | PF1 | same as NES |
 | Pin 4 | D0 (data) | PF2 | same as NES |
-| Pin 1 | VCC (3.3V) | — | 2.54mm pin 15 (3V0) |
-| Pin 7 | GND | — | 2.54mm pin 29 (GND) |
+| Pin 1 | VCC (3.3V) | — | 1.27mm pad 15 (3V3) |
+| Pin 7 | GND | — | 1.27mm pad 29 (GND) |
 
 ### Genesis Controller (DE-9)
 
@@ -103,8 +121,8 @@ D4 and D5 are remapped to PG5 and PB6.
 | Pin 4 | D3 | Right | 0 | PF3 | SDC0 pin |
 | Pin 6 | D4 (TL) | B | A | PF4 | SDC0 pin |
 | Pin 9 | D5 (TR) | C | Start | PF5 | SDC0 pin |
-| Pin 7 | SELECT | (output) | (output) | PE1 | 2.54mm pin 1 |
-| Pin 8 | GND | — | — | — | 2.54mm pin 29 |
+| Pin 7 | SELECT | (output) | (output) | PE1 | 1.27mm pad 1 |
+| Pin 8 | GND | — | — | — | 1.27mm pad 29 |
 | Pin 5 | VCC | — | — | — | *not connected* |
 
 ```
@@ -128,9 +146,9 @@ use one or the other, not both.
 
 | N64 plug | Signal | GPIO | Physical Location |
 |---|---|---|---|
-| **Middle pin** | Data | PE20 | 2.54mm pin 5 |
-| Outer pin | GND | — | 2.54mm pin 29 |
-| Other outer pin | VCC (3.3V) | — | 2.54mm pin 15 (3V0) |
+| **Middle pin** | Data | PE20 | 1.27mm pad 5 |
+| Outer pin | GND | — | 1.27mm pad 29 |
+| Other outer pin | VCC (3.3V) | — | 1.27mm pad 15 (3V3) |
 
 Data is always the **middle** pin. Which outer pin is GND and which is
 3.3V depends on whether you're looking at the controller's plug or a
@@ -150,8 +168,8 @@ PF2     SDC0               NES DATA / Genesis D2
 PF3     SDC0               Genesis D3
 PF4     SDC0               Genesis D4
 PF5     SDC0               Genesis D5
-PE1     2.54mm pin 1       Genesis SELECT
-PE20    2.54mm pin 5       N64 DATA
+PE1     1.27mm pad 1       Genesis SELECT
+PE20    1.27mm pad 5       N64 DATA
 ```
 
 NES + N64 simultaneously: yes (PF0-PF2 + PE20, no overlap).
@@ -165,7 +183,7 @@ All controllers + YM3438: yes (controllers on PF/PE, YM3438 on PB/PG).
 ```
 ┌──────┐  HDMI   ┌──────────┐  ribbon  ┌──────────┐  wires  ┌──────────┐
 │ Pico │────────►│ TC358743 │─────────►│FPC break-│────────►│ Lichee Pi│
-│(DVI) │  cable  │  board   │  15-pin  │out board │ 7 wires │  2.54mm  │
+│(DVI) │  cable  │  board   │  15-pin  │out board │ 7 wires │ 1.27 pads│
 └──────┘         └──────────┘   FPC    └──────────┘         └──────────┘
 ```
 
@@ -206,7 +224,7 @@ is already wired that way.)
 
 ### TC358743 → V3s MIPI CSI-2
 
-15-pin FPC breakout → 7 wires → Lichee Pi 2.54mm header.
+15-pin FPC breakout → wires → Lichee Pi. The lanes and their ground go to the **1.27mm half-hole pads** (odd pins below), not the 2.54mm row.
 
 | TC358743 FPC Pin | Signal | Lichee Pi 2.54mm Pin |
 |---|---|---|
@@ -261,7 +279,7 @@ I2C0 (PB6/PB7) remains available for Si5351 clock generator.
 ### TC358743 Power
 
 Check your specific board — most have onboard regulators.
-If not, supply 3.3V from Lichee Pi 2.54mm pin 15 (3V0).
+If not, supply 3.3V from Lichee Pi 1.27mm pad 15 (3V3).
 
 ---
 
@@ -276,8 +294,8 @@ If not, supply 3.3V from Lichee Pi 2.54mm pin 15 (3V0).
 | PF3 | SDC0 | Genesis D3 |
 | PF4 | SDC0 | Genesis D4 |
 | PF5 | SDC0 | Genesis D5 |
-| PE1 | 2.54mm pin 1 | Genesis SELECT |
-| PE20 | 2.54mm pin 5 | N64 DATA |
+| PE1 | 1.27mm pad 1 | Genesis SELECT |
+| PE20 | 1.27mm pad 5 | N64 DATA |
 | **YM3438 FM Chip (PB + PG)** | | |
 | PB0-PB7 | 2.54mm pins 6-16 | D0-D7 data bus |
 | PG0 | J3 pin 1 | A0 |
@@ -295,14 +313,14 @@ If not, supply 3.3V from Lichee Pi 2.54mm pin 15 (3V0).
 | PC1 | 2.54mm pin 22 | SPI CLK |
 | PC3 | 2.54mm pin 24 | SPI MOSI |
 | **MIPI CSI-2 (TC358743)** | | |
-| MCSI-D0P/N | 2.54mm pins 17/19 | Data Lane 0 |
-| MCSI-D1P/N | 2.54mm pins 21/23 | Data Lane 1 |
-| MCSI-CKP/N | 2.54mm pins 25/27 | Clock |
+| MCSI-D0P/N | 1.27mm pads 17/19 | Data Lane 0 |
+| MCSI-D1P/N | 1.27mm pads 21/23 | Data Lane 1 |
+| MCSI-CKP/N | 1.27mm pads 25/27 | Clock |
 | **Reserved** | | |
 | PB4 | 2.54mm pin 10 | YM3438 D4 / LCD backlight |
 | PB5 | 2.54mm pin 12 | YM3438 D5 / LCD backlight |
 | PB8/PB9 | 2.54mm pins 18/20 | UART0 (debug serial) |
-| PE0 | 2.54mm pin 3 | LCD_CLK (required) |
+| PE0 | 1.27mm pad 3 | LCD_CLK (required) |
 | PE2-PE23 | FPC40 | LCD RGB data + sync |
 
 Controllers + YM3438 + Pico coprocessor + LCD — all simultaneously, zero conflicts.
@@ -333,18 +351,18 @@ NES + N64 simultaneously: yes. Genesis exclusive with NES/SNES (shares PF0-PF2).
 
 | YM3438 Pin | Signal | Lichee Pi | Notes |
 |---|---|---|---|
-| 1 (GND) | Ground | 2.54mm pin 29 | |
+| 1 (GND) | Ground | 1.27mm pad 29 | |
 | 2 (D0) | Data bit 0 | PB0 — 2.54mm pin 6 | |
 | 3 (D1) | Data bit 1 | PB1 — 2.54mm pin 8 | |
-| 4 (D2) | Data bit 2 | PB2 — 2.54mm pin 7 | |
-| 5 (D3) | Data bit 3 | PB3 — 2.54mm pin 9 | |
+| 4 (D2) | Data bit 2 | PB2 — 1.27mm pad 7 | |
+| 5 (D3) | Data bit 3 | PB3 — 1.27mm pad 9 | |
 | 6 (D4) | Data bit 4 | PB4 — 2.54mm pin 10 | See backlight fix below |
 | 7 (D5) | Data bit 5 | PB5 — 2.54mm pin 12 | See backlight fix below |
 | 8 (D6) | Data bit 6 | PB6 — 2.54mm pin 14 | Shared with I2C0 SCK |
 | 9 (D7) | Data bit 7 | PB7 — 2.54mm pin 16 | Shared with I2C0 SDA |
 | 10 (/RD) | Read strobe | Tie to **+5V** | Never read from chip |
 | 11 (/WR) | Write strobe | PG2 — J3 pin 3 | Active low |
-| 12 (GND) | Ground | 2.54mm pin 29 | |
+| 12 (GND) | Ground | 1.27mm pad 29 | |
 | 13 (/IRQ) | Interrupt out | *not connected* | Unused |
 | 14 (TEST) | Test pin | *not connected* | Leave floating |
 | 15 (/CS) | Chip select | PG3 — J3 pin 5 | Active low |

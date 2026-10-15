@@ -32,8 +32,8 @@ NES/SNES:
 Genesis:
   PB0       D0 (Up)                   (2.54mm pin 6)
   PB1       D1 (Down)                 (2.54mm pin 8)
-  PB2       D2 (Left)                 (2.54mm pin 7)
-  PB3       D3 (Right)                (2.54mm pin 9)
+  PB2       D2 (Left)                 (1.27mm pad 7)
+  PB3       D3 (Right)                (1.27mm pad 9)
   PG5       D4 (TL: B/A)             (J3 pin 4)
   PB6       D5 (TR: C/Start)         (2.54mm pin 14)
   PG3       SELECT                    (J3 pin 5)
@@ -91,7 +91,7 @@ YM3438:
   PE1       φM clock (8.0 MHz)        (CCU MCLK output, no Si5351)
 
 N64 Controllers:
-  PE20      N64 Player 1              (2.54mm pin 5)
+  PE20      N64 Player 1              (1.27mm pad 5)
   PG5       N64 Player 2              (J3 pin 4)
 
 Free:
@@ -155,9 +155,9 @@ Pico (via TC358743 HDMI-to-CSI bridge):
   PC2       SPI CS (to Pico GP5)
   PC1       SPI CLK (to Pico GP6)
   PC3       SPI MOSI (to Pico GP4)
-  MCSI-D0P/N  MIPI CSI-2 Data 0      (2.54mm pins 17/19)
-  MCSI-D1P/N  MIPI CSI-2 Data 1      (2.54mm pins 21/23)
-  MCSI-CKP/N  MIPI CSI-2 Clock       (2.54mm pins 25/27)
+  MCSI-D0P/N  MIPI CSI-2 Data 0      (1.27mm pads 17/19)
+  MCSI-D1P/N  MIPI CSI-2 Data 1      (1.27mm pads 21/23)
+  MCSI-CKP/N  MIPI CSI-2 Clock       (1.27mm pads 25/27)
   PE21      I2C1 SCK (TC358743 config)
   PE22      I2C1 SDA (TC358743 config)
 
@@ -235,7 +235,7 @@ MIDI (UART1):
   TX, 6N138 opto on RX).
 
 N64 Controller (P1, drives editor UI):
-  PE20      N64 DATA                  (2.54mm pin 5)
+  PE20      N64 DATA                  (1.27mm pad 5)
 
 SDC0 (stays primary owner — runtime patch saves work without mux flip):
   PF0-PF5   SD CMD/CLK/D0-D3          (active throughout)
