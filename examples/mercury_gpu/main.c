@@ -35,7 +35,7 @@
  *                          pair (~594 = arriving; 0 = no HS clock)
  *                Button A restarts the link (receiver, then bridge
  *                stream); B swaps red/blue in case the bridge's RGB888
- *                byte order is the other way round; Start switches
+ *                byte order is the other way round; C-Down switches
  *                2 <-> 1 lanes — one lane only needs CLK + D0
  *                wired right, which isolates a bad D1 pair.
  *
@@ -446,7 +446,7 @@ static void hud_status(volatile uint32_t *ovl, int bridge_state, uint8_t st,
     draw_text(ovl, LCD_W, "CLK:", 248, y, 1, COL_LABEL);
     draw_dec(ovl, LCD_W, mbps, 272, y, 1,
              (mbps > 500 && mbps < 700) ? COL_OK : COL_BAD);
-    draw_text(ovl, LCD_W, "A:RELINK B:RB START:LN", 314, y, 1, COL_DIM);
+    draw_text(ovl, LCD_W, "A:RELINK B:RB CD:LANES", 314, y, 1, COL_DIM);
 }
 
 /* ================================================================
@@ -562,7 +562,7 @@ int main(void)
             uart_puts("[mercury] relink\n");
             link_start(bridge_ok);
         }
-        if (input_pressed() & BTN_START) {           /* lane switch */
+        if (input_pressed() & BTN_C_DOWN) {          /* lane switch */
             csi_lanes = (csi_lanes == 2) ? 1 : 2;
             uart_puts("[mercury] lanes -> "); uart_putdec((uint32_t)csi_lanes);
             uart_puts("\n");
