@@ -1,17 +1,17 @@
 /*
  * Jupiter 32X — Pico Polygon Coprocessor
  *
- * Renders flat-shaded polygons and outputs via PicoDVI (HDMI) to a
+ * Renders flat-shaded polygons and outputs DVI (HDMI-compatible) to a
  * TC358743 bridge, which converts to MIPI CSI-2 for V3s capture.
- * Future: direct PIO MIPI TX with LVDS driver for arbitrary resolution.
  *
- * Pin assignments:
- *   GPIO 0-7:   PicoDVI TMDS (4 differential pairs)
- *   GPIO 8-11:  SPI1 slave (display list from V3s)
+ * Boards / output routes (selected in CMakeLists.txt):
+ *   Pico 2 / Pico 2 W (RP2350) — HSTX hardware DVI on GP12-19 (default)
+ *   Pico (RP2040)              — PicoDVI bit-banged DVI on GP0-7
+ *   either, MERCURY_ROUTE_DVP  — PIO parallel DVP on GP0-10
+ * SPI1 slave (display list from V3s) on GP8-11, or GP12-15 for DVP.
  *
- * Scanout interface is abstracted — swap dvi_out.c for mipi_out.c
- * to switch from bridge route to analog route without touching
- * the rasterizer or display list parser.
+ * Scanout interface is abstracted — the rasterizer and display list
+ * parser never know which route is compiled in.
  */
 
 #ifndef JUPITER32X_H
@@ -46,7 +46,7 @@
 #define J32X_DVI_X_OFFSET   ((J32X_DVI_H_ACTIVE - J32X_WIDTH) / 2)
 #define J32X_DVI_Y_OFFSET   ((J32X_DVI_V_ACTIVE - J32X_HEIGHT) / 2)
 
-/* Pin assignments — PicoDVI route */
+/* Pin assignments — PicoDVI route (RP2040, dvi_out.c) */
 #define PIN_DVI_D2P     0       /* TMDS Data 2+ (Blue) */
 #define PIN_DVI_D2N     1       /* TMDS Data 2- */
 #define PIN_DVI_D1P     2       /* TMDS Data 1+ (Green) */
@@ -55,6 +55,32 @@
 #define PIN_DVI_D0N     5       /* TMDS Data 0- */
 #define PIN_DVI_CLKP    6       /* TMDS Clock+ */
 #define PIN_DVI_CLKN    7       /* TMDS Clock- */
+
+/* Pin assignments — HSTX route (RP2350 Pico 2 / 2 W, hstx_dvi_out.c).
+ * HSTX only exists on GP12-19, so the DVI connector board must route
+ * all four TMDS pairs there. Each pair is (base, base+1); _INVERT=1
+ * means base is the "-" pin. Presets (from PicoDVI's
+ * common_dvi_pin_configs.h, the authoritative board table):
+ *   MERCURY_HSTX_BOARD_DVI_SOCK (default) — Pico DVI Sock
+ *   MERCURY_HSTX_BOARD_AMY                — Amy's DVI board
+ * Or define MERCURY_HSTX_D0/D1/D2/CLK/INVERT yourself. Boards wired
+ * outside GP12-19 (e.g. Pimoroni Demo Base on GP6-13) can't use HSTX.
+ * The Pico 2 W's CYW43 radio uses GP23/24/25/29 — untouched here. */
+#if defined(MERCURY_HSTX_BOARD_AMY)
+#define MERCURY_HSTX_D0      14
+#define MERCURY_HSTX_D1      16
+#define MERCURY_HSTX_D2      18
+#define MERCURY_HSTX_CLK     12
+#define MERCURY_HSTX_INVERT  1
+#elif !defined(MERCURY_HSTX_D0)     /* DVI Sock */
+#define MERCURY_HSTX_D0      12
+#define MERCURY_HSTX_D1      18
+#define MERCURY_HSTX_D2      16
+#define MERCURY_HSTX_CLK     14
+#define MERCURY_HSTX_INVERT  0
+#endif
+#define PIN_HSTX_FIRST  12
+#define PIN_HSTX_LAST   19
 
 /* Pin assignments — DVP/parallel route (csi_out.c, MERCURY_ROUTE_DVP).
  * Feeds a TC358748 DVP→CSI-2 bridge; data pins must start at GPIO0 for
@@ -68,9 +94,10 @@
 #define J32X_PIO_CLKDIV 5.0f
 
 /* Pin assignments — SPI slave (display list from V3s).
- * RP2040 SPI1 pin groups: RX {8,12}, CSn {9,13}, SCK {10,14}, TX {11,15}.
- * The DVI route uses group 8-11; the DVP route needs 8-10 for
- * PCLK/HREF/VSYNC, so SPI moves to group 12-15 there. */
+ * SPI1 pin groups (same on RP2040 and RP2350): RX {8,12}, CSn {9,13},
+ * SCK {10,14}, TX {11,15}. The DVI and HSTX routes use group 8-11
+ * (HSTX owns 12-19); the DVP route needs 8-10 for PCLK/HREF/VSYNC, so
+ * SPI moves to group 12-15 there. */
 #ifdef MERCURY_ROUTE_DVP
 #define PIN_SPI_RX      12      /* SPI1 RX (MOSI from V3s) */
 #define PIN_SPI_CSN     13      /* SPI1 CSn */

@@ -1,6 +1,6 @@
 # Mercury — Pico Polygon Coprocessor for Jupiter
 
-A Raspberry Pi Pico (RP2040) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, streaming frames back to the Allwinner V3s through its MIPI CSI-2 camera input (via a bridge chip — see "Pico → V3s bridge chip" below). Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
+A Raspberry Pi Pico 2 W (RP2350; the original RP2040 Pico is still supported) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, streaming frames back to the Allwinner V3s through its MIPI CSI-2 camera input (via a bridge chip — see "Pico → V3s bridge chip" below). Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
 
 ## Architecture
 
@@ -30,24 +30,60 @@ The V3s sends a display list over SPI each frame (~2KB of triangle/quad commands
 > uses for the RGB LCD — a direct Pico→PE parallel hookup is not
 > possible alongside the display.
 
-## Wiring — DVI route (default)
+## Wiring — Pico 2 / Pico 2 W, HSTX DVI route (default)
+
+The RP2350's **HSTX** peripheral TMDS-encodes in hardware, so the scan-
+out core does no pixel work at all (ping-pong DMA feeds the HSTX FIFO).
+HSTX exists **only on GP12–GP19**, so the DVI/HDMI connector board must
+put all four TMDS pairs there. Default layout = Pico DVI Sock:
+
+```
+Pico 2 GPIO  Signal            Goes to
+───────────  ──────            ───────
+GP12/GP13    TMDS D0± (blue)   HDMI connector → TC358743 (or a monitor)
+GP14/GP15    TMDS CLK±             "
+GP16/GP17    TMDS D2± (red)        "
+GP18/GP19    TMDS D1± (green)      "
+GP8          SPI1 RX (MOSI)    V3s PC3 (SPI0 MOSI)
+GP9          SPI1 CSn          V3s PC2 (SPI0 CS)
+GP10         SPI1 SCK          V3s PC1 (SPI0 CLK)
+GP11         SPI1 TX (MISO)    optional readback
+GND          GND               common ground
+```
+
+Each TMDS line needs a ~270 Ω series resistor (DVI Sock-style boards
+include them). Other board layouts: `-DMERCURY_HSTX_BOARD=AMY` for
+Amy's DVI board (GP12-19, inverted pairs), or define
+`MERCURY_HSTX_D0/D1/D2/CLK/INVERT` for anything else whose pairs all
+sit within GP12-19. A board wired elsewhere (e.g. Pimoroni's Demo Base,
+GP6-13) cannot use HSTX. The Pico 2 W's radio pins (GP23/24/25/29) are
+untouched — Mercury doesn't use wireless.
+
+**Clock:** HSTX shifts 2 bits per `clk_hstx` cycle and the SDK ties
+`clk_hstx` to `clk_sys`, so the build pins `clk_sys` to **126 MHz**
+(252 Mbps/lane → 25.2 MHz pixel clock → exactly 60.0 Hz). At the
+RP2350's 150 MHz default the same config would emit a non-standard
+~71 Hz mode. The M33 at 126 MHz still out-rasterizes the RP2040's
+M0+ comfortably (hardware divide, faster multiply).
+
+## Wiring — Pico (RP2040), PicoDVI route (`-DPICO_BOARD=pico`)
 
 ```
 Pico GPIO    Signal            Goes to
 ─────────    ──────            ───────
-GP0/GP1      TMDS D2± (blue)   TC358743 HDMI input
+GP0/GP1      TMDS D2± (red)    TC358743 HDMI input
 GP2/GP3      TMDS D1± (green)      "
-GP4/GP5      TMDS D0± (red)        "
+GP4/GP5      TMDS D0± (blue)       "
 GP6/GP7      TMDS CLK±             "
 GP8          SPI1 RX (MOSI)    V3s SPI master MOSI
 GP9          SPI1 CSn          V3s SPI master CS
 GP10         SPI1 SCK          V3s SPI master SCK
 GP11         SPI1 TX (MISO)    optional readback
 GND          GND               common ground
-
-Bridge → V3s: TC358743 CSI-2 output → Lichee Pi Zero MIPI CSI pins
-(header pins 17/19 = D0±, 21/23 = D1±, 25/27 = CLK±).
 ```
+
+Bridge → V3s (both DVI routes): TC358743 CSI-2 output → Lichee Pi Zero
+MIPI CSI pins (header pins 17/19 = D0±, 21/23 = D1±, 25/27 = CLK±).
 
 ## Wiring — DVP route (`-DMERCURY_ROUTE_DVP=ON`)
 
@@ -69,13 +105,16 @@ Power: Pico VSYS from V3s 5V, or separate USB power. Both boards share a common 
 
 ## Pin Rationale
 
-- **GP0-GP7 for output data**: consecutive GPIO bank — required both by
-  PicoDVI's serialiser and by PIO `out pins, 8` on the DVP route
+- **GP12-GP19 for DVI on RP2350**: the only pins HSTX can drive
+- **GP0-GP7 for output data on RP2040 / DVP**: consecutive GPIO bank —
+  required both by PicoDVI's serialiser and by PIO `out pins, 8`
 - **GP8-GP10 (DVP) for PCLK/HREF/VSYNC**: PCLK is PIO side-set,
   HREF/VSYNC are CPU GPIO (timing isn't cycle-critical)
-- **SPI**: RP2040 hardware SPI1 only maps to pin groups
-  RX {8,12} / CSn {9,13} / SCK {10,14} / TX {11,15}. The DVI route uses
+- **SPI**: hardware SPI1 (same groups on RP2040 and RP2350) only maps to
+  RX {8,12} / CSn {9,13} / SCK {10,14} / TX {11,15}. Both DVI routes use
   group 8-11; the DVP route needs 8-10 for sync, so SPI moves to 12-15.
+  CSn has an internal pull-up so it idles deasserted with no V3s
+  attached (the self-test needs that).
 
 ## Display List Protocol
 
@@ -94,6 +133,7 @@ Commands:
   0x11 TEXTURE       — upload texture (4+N bytes: cmd, slot, size u16 LE,
                        data). slot < 8, size ≤ 4096 or the frame aborts.
   0x20 SET_RES       — set framebuffer resolution (5 bytes: cmd, w u16, h u16)
+                       w: multiple of 4, 32..320; h: 1..224 (else ignored)
   0xFF SCENE_END     — swap buffers and display
 
 Reserved (defined in jupiter32x.h but not yet implemented): 0x06 SPRITE,
@@ -137,16 +177,22 @@ The cube uses painter's algorithm (back-to-front face sorting) and integer-only 
 ## Building
 
 ```bash
-export PICO_SDK_PATH=/path/to/pico-sdk
-cd mercury
-git clone https://github.com/Wren6991/PicoDVI external/PicoDVI  # DVI route only
-mkdir build && cd build
-cmake ..                        # DVI route (default)
-# cmake -DMERCURY_ROUTE_DVP=ON ..   # parallel DVP route instead
+export PICO_SDK_PATH=/path/to/pico-sdk          # SDK 2.1.1 or newer
+cd mercury && mkdir build && cd build
+cmake ..                                  # Pico 2 W: HSTX DVI (default)
+# cmake -DMERCURY_HSTX_BOARD=AMY ..       #   ...Amy's DVI board layout
+# cmake -DPICO_BOARD=pico2 ..             #   plain Pico 2: same firmware path
+# cmake -DMERCURY_ROUTE_DVP=ON ..         #   parallel DVP route instead
 make
 ```
 
-Flash `mercury.uf2` to the Pico via USB drag-and-drop.
+For the RP2040 Pico instead: `git clone https://github.com/Wren6991/PicoDVI
+external/PicoDVI` (from `mercury/`), then `cmake -DPICO_BOARD=pico ..`.
+The SDK fetches and builds `picotool` on first configure for RP2350
+targets (set `PICOTOOL_FETCH_FROM_GIT_PATH` to share it across builds).
+
+Flash `mercury.uf2`: hold BOOTSEL while plugging in USB, drag the file
+onto the drive that appears.
 
 ## V3s Integration
 
@@ -179,7 +225,8 @@ mercury/
 ├── CMakeLists.txt              Pico SDK build config
 ├── README.md                   This file
 ├── include/
-│   └── jupiter32x.h            Constants, types, display list format
+│   ├── jupiter32x.h            Constants, types, pins + HSTX board presets
+│   └── hstx_dvi_stream.h       RP2350 DVI timing + HSTX command opcodes
 ├── pio/
 │   └── csi_out.pio             PIO programs for DVP pixel + sync output
 ├── src/
@@ -187,12 +234,15 @@ mercury/
 │   ├── mercury_raster.c           Triangle/line/hline rasterizer, double-buffer swap
 │   ├── mercury_displaylist.c      Display list command parser and dispatch
 │   ├── mercury_spi.c              SPI slave receiver (hardware SPI1, CS-framed)
-│   ├── dvi_out.c               Core 1: PicoDVI scanout (default route)
+│   ├── hstx_dvi_out.c          Core 1: RP2350 HSTX DVI scanout (default, Pico 2 / 2 W)
+│   ├── hstx_dvi_stream.c       HSTX DMA segment generator (pure C, host-tested)
+│   ├── dvi_out.c               Core 1: PicoDVI scanout (RP2040)
 │   └── csi_out.c               Core 1: PIO + DMA parallel DVP scanout (MERCURY_ROUTE_DVP)
 ├── test/
 │   ├── Makefile                Host-side tests, no pico-sdk needed
-│   └── test_mercury.c             Renders the cube via display list → PNG,
-│                                  clip-equivalence fuzz, hostile-input fuzz (ASan)
+│   ├── test_mercury.c             Renders the cube via display list → PNG,
+│   │                              clip-equivalence fuzz, hostile-input fuzz (ASan)
+│   └── test_hstx_stream.c         Decodes the HSTX DVI stream symbol-by-symbol
 └── v3s_side/
     ├── mercury_csi_capture.h      V3s CSI capture driver (add to Jupiter SDK build)
     ├── mercury_spi_master.h       V3s SPI0 master — CS-framed display-list sender
@@ -215,12 +265,13 @@ mercury_displaylist.c + mercury_raster.c, rendered to PNG).
 
 ## Host tests
 
-The rasterizer and display list parser are plain C with no hardware
-dependencies, so they run (and get fuzzed) on a PC:
+The rasterizer, display list parser, and HSTX stream generator are
+plain C with no hardware dependencies, so they run (and get fuzzed) on
+a PC:
 
 ```bash
 cd mercury/test
-make && ./test_mercury
+make && ./test_mercury && ./test_hstx_stream
 ```
 
 This renders the self-test cube through the display-list path to
@@ -228,6 +279,16 @@ This renders the self-test cube through the display-list path to
 against an int64 reference over 20,000 random triangles with coordinates
 up to ±32767, and feeds the parser oversized texture claims, truncated
 commands, and 20,000 garbage streams under AddressSanitizer.
+
+`test_hstx_stream` feeds the RP2350 scanout's DMA segments, in the order
+the ping-pong channels deliver them, through a model of the HSTX command
+expander (RAW / RAW_REPEAT / TMDS / NOP) and checks every symbol period
+of 4 frames: 800 periods per line, front porch/sync/back porch
+placement and polarity, the two vsync lines, black letterbox and
+pillarbox, and every framebuffer pixel in position — across a buffer
+swap and a mid-stream resolution change. It caught a one-word
+command-list misalignment (no-signal on a real monitor) during
+development.
 
 ## Pico → V3s bridge chip
 

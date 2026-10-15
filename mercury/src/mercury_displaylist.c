@@ -75,7 +75,11 @@ void j32x_exec_displaylist(const uint8_t *buf, uint32_t len)
         case CMD_SET_RES: {
             if (pos + sizeof(j32x_cmd_set_res_t) > len) return;
             const j32x_cmd_set_res_t *c = (const j32x_cmd_set_res_t *)&buf[pos];
-            if (c->w <= J32X_WIDTH && c->h <= J32X_HEIGHT && c->w > 0 && c->h > 0) {
+            /* Width must be a multiple of 4 and >= 32: scanout DMAs
+             * framebuffer rows as 32-bit words (word-aligned row
+             * starts), and HSTX segments must outlast the 8-word FIFO. */
+            if (c->w <= J32X_WIDTH && c->h <= J32X_HEIGHT &&
+                c->w >= 32 && (c->w & 3) == 0 && c->h > 0) {
                 g_state.width = c->w;
                 g_state.height = c->h;
             }

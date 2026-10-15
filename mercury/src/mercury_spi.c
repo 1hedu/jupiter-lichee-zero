@@ -32,6 +32,14 @@ void j32x_spi_init(void)
     gpio_set_function(PIN_SPI_SCK, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SPI_CSN, GPIO_FUNC_SPI);
     gpio_set_function(PIN_SPI_TX,  GPIO_FUNC_SPI);
+
+    /* CSn must idle HIGH with no master attached. GPIO pads reset with
+     * the pull-DOWN enabled, so a floating CSn read as "asserted" and
+     * j32x_spi_recv_displaylist waited forever for bytes — the
+     * self-test cube could never run without a V3s connected. A
+     * pull-up fixes that, and also steers clear of RP2350 erratum E9
+     * (pull-down latch-up on Bank 0 inputs). */
+    gpio_pull_up(PIN_SPI_CSN);
 }
 
 /* Drop everything sitting in the RX FIFO. */

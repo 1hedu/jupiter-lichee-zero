@@ -322,6 +322,13 @@ int main(void)
     sr.w = 0xFFFF; sr.h = 0xFFFF;
     memcpy(evil, &sr, sizeof(sr));
     j32x_exec_displaylist(evil, sizeof(sr));
+    /* widths the word-DMA scanout can't use: not /4, and below 32 */
+    sr.w = 162; sr.h = 100;
+    memcpy(evil, &sr, sizeof(sr));
+    j32x_exec_displaylist(evil, sizeof(sr));
+    sr.w = 28; sr.h = 100;
+    memcpy(evil, &sr, sizeof(sr));
+    j32x_exec_displaylist(evil, sizeof(sr));
     if (g_state.width != J32X_WIDTH || g_state.height != J32X_HEIGHT) {
         fprintf(stderr, "bad SET_RES accepted (%ux%u)!\n",
                 g_state.width, g_state.height);
