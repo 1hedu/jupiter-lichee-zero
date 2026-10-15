@@ -8,7 +8,8 @@
  * Mercury's fixed configuration:
  *
  *   HDMI in:  640×480p60 RGB (DVI, no audio/infoframes — PicoDVI)
- *   CSI out:  2 lanes, 594 Mbps/lane, RGB888, continuous clock
+ *   CSI out:  2 lanes, 594 Mbps/lane, RGB888 (UYVY with
+ *             -DMERCURY_CSI_UYVY), continuous clock
  *   Refclk:   27 MHz (the B101's onboard oscillator; change
  *             TC_REFCLK_HZ if your bridge board differs)
  *
@@ -26,6 +27,11 @@
  * The Pico never reads EDID or checks HPD, so the EDID RAM is left
  * unprogrammed and HPD stays low. If you ever feed this bridge from a
  * real HDMI source, load a 640×480 EDID into 0x8C00+ first.
+ *
+ * Two calls, in Linux's order: tc358743_init() configures everything
+ * with the video output muted, the V3s receiver is brought up
+ * (mercury_csi_capture.h), then tc358743_stream_on() starts the CSI
+ * stream — the receiver must see the lanes go LP-11 → HS.
  *
  * Status: UNTESTED on silicon (no bridge board on the bench yet).
  * tc358743_status() dumps everything needed to debug lock issues.
@@ -99,6 +105,7 @@
 #define TC_VOUT_SET2       0x8573
 #define TC_VOUT_SET3       0x8574
 #define TC_VI_REP          0x8576
+#define TC_VI_MUTE         0x857F
 #define TC_FH_MIN0         0x85AA
 #define TC_FH_MIN1         0x85AB
 #define TC_FH_MAX0         0x85AC
@@ -139,6 +146,7 @@
 /* CONFCTL bits */
 #define TC_MASK_AUDCHNUM_2    0x0C00
 #define TC_MASK_YCBCRFMT      0x00C0   /* 0 = RGB888 */
+#define TC_MASK_YCBCRFMT_422_8_BIT 0x00C0
 #define TC_MASK_AUDOUTSEL_I2S 0x0010
 #define TC_MASK_AUTOINDEX     0x0004
 #define TC_MASK_ABUFEN        0x0002
@@ -163,6 +171,15 @@
 #define TC_MASK_WCER       0x00000100u
 #define TC_MASK_QUNK       0x00000010u
 #define TC_MASK_TXBRK      0x00000002u
+/* VOUT_SET2 / VI_REP / VI_MUTE bits */
+#define TC_MASK_SEL422          0x80
+#define TC_MASK_VOUT_422FIL_100 0x40
+#define TC_MASK_VOUT_COLOR_SEL  0xE0
+#define TC_MASK_VOUT_COLOR_601_YCBCR_LIMITED 0x60
+#define TC_MASK_AUTO_MUTE       0xC0
+#define TC_MASK_VI_MUTE         0x10
+#define TC_MASK_CONTCLKMODE     0x00000001u
+
 /* SYS_STATUS bits — the debug window into the HDMI RX */
 #define TC_MASK_S_SYNC     0x80        /* video sync locked */
 #define TC_MASK_S_AVMUTE   0x40
@@ -427,14 +444,27 @@ static inline int tc358743_init(void)
     tc_wr8(TC_NO_PKT_LIMIT2, 0x30);
     tc_wr8(TC_NO_GDB_LIMIT, 0x10);
 
-    /* --- video path: DVI sources are RGB full range; auto color out,
-     *     RGB888 (YCBCRFMT = 0), no 422 --- */
+    /* --- video path: DVI sources are RGB full range; auto color out.
+     *     Output colour space per tc358743_set_csi_color_space(). --- */
     tc_wr8(TC_VI_MODE, tc_rd8(TC_VI_MODE) & ~0x08);
     tc_wr8(TC_VOUT_SET2, (tc_rd8(TC_VOUT_SET2) & ~0x03) | 0x01);
     tc_wr8(TC_VOUT_SET3, 0x08);
-    tc_wr8(TC_VOUT_SET2, tc_rd8(TC_VOUT_SET2) & ~(0x80 | 0x40));
-    tc_wr8(TC_VI_REP, tc_rd8(TC_VI_REP) & ~0xE0);      /* RGB full */
+#ifdef MERCURY_CSI_UYVY
+    /* YCbCr 4:2:2 8-bit, BT.601 limited range */
+    tc_wr8(TC_VOUT_SET2, (tc_rd8(TC_VOUT_SET2) &
+           ~(TC_MASK_SEL422 | TC_MASK_VOUT_422FIL_100)) |
+           TC_MASK_SEL422 | TC_MASK_VOUT_422FIL_100);
+    tc_wr8(TC_VI_REP, (tc_rd8(TC_VI_REP) & ~TC_MASK_VOUT_COLOR_SEL) |
+           TC_MASK_VOUT_COLOR_601_YCBCR_LIMITED);
+    tc_wr16(TC_CONFCTL, (tc_rd16(TC_CONFCTL) & ~TC_MASK_YCBCRFMT) |
+            TC_MASK_YCBCRFMT_422_8_BIT);
+#else
+    /* RGB888, full range */
+    tc_wr8(TC_VOUT_SET2, tc_rd8(TC_VOUT_SET2) &
+           ~(TC_MASK_SEL422 | TC_MASK_VOUT_422FIL_100));
+    tc_wr8(TC_VI_REP, tc_rd8(TC_VI_REP) & ~TC_MASK_VOUT_COLOR_SEL);
     tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) & ~TC_MASK_YCBCRFMT);
+#endif
 
     /* --- set_pll: PRD/FBD for 594 Mbps/lane, FRS=0 (hsck>500M) --- */
     tc358743_sleep(1);
@@ -461,7 +491,7 @@ static inline int tc358743_init(void)
     tc_wr32(TC_THS_TRAILCNT,   0x00000002);
     tc_wr32(TC_HSTXVREGCNT,    0x00000000);
     tc_wr32(TC_HSTXVREGEN, 0x01 | 0x02 | 0x04);        /* CLK + D0 + D1 */
-    tc_wr32(TC_TXOPTIONCNTRL, 0x00000001);             /* continuous clk */
+    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);    /* continuous clk */
     tc_wr32(TC_STARTCNTRL, 0x00000001);
     tc_wr32(TC_CSI_START,  0x00000001);
     tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_CONTROL |
@@ -472,10 +502,26 @@ static inline int tc358743_init(void)
             TC_MASK_TXBRK | TC_MASK_QUNK);
     tc_wr32(TC_CSI_CONFW, TC_MODE_SET | TC_ADDR_CSI_INT_ENA | TC_MASK_INTER);
 
-    /* --- open the video buffer: frames flow HDMI → CSI --- */
-    tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) | TC_MASK_VBUFEN);
+    /* --- video stays muted (lanes idle in LP-11) until
+     *     tc358743_stream_on() --- */
+    tc_wr8(TC_VI_MUTE, TC_MASK_AUTO_MUTE | TC_MASK_VI_MUTE);
+    tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) & ~TC_MASK_VBUFEN);
 
     return 0;
+}
+
+/*
+ * Start the CSI stream — Linux enable_stream(): drop to
+ * non-continuous clock so the clock lane sits in LP-11, switch back to
+ * continuous to make the receiver see LP-11 → HS, unmute, open the
+ * video buffer. Call after the V3s receiver is configured.
+ */
+static inline void tc358743_stream_on(void)
+{
+    tc_wr32(TC_TXOPTIONCNTRL, 0);
+    tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);
+    tc_wr8(TC_VI_MUTE, TC_MASK_AUTO_MUTE);
+    tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) | TC_MASK_VBUFEN);
 }
 
 /*

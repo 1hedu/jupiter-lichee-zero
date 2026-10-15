@@ -216,23 +216,30 @@ onto the drive that appears.
 
 ## V3s Integration
 
-On the V3s Jupiter SDK side, add `v3s_side/mercury_csi_capture.h` to your build:
+On the V3s Jupiter SDK side, `v3s_side/` carries the whole receive
+chain — `examples/mercury_gpu/main.c` is the working reference:
 
 ```c
+#include "tc358743_init.h"
+#include "mercury_spi_master.h"
 #include "mercury_csi_capture.h"
 
-// During init:
-csi_clocks_init();
-csi_gpio_init();
-csi_capture_init(MERCURY_CAPTURE_BUF, MERCURY_RES_GENESIS);  // phys DRAM addr, resolution
+// During init — order matters: the V3s D-PHY must be listening before
+// the bridge's lanes go LP-11 -> HS.
+tc358743_init();          // bridge configured, video muted
+csi_capture_init();       // clocks, D-PHY RX, CSI-2 controller, CSI0 DMA
+tc358743_stream_on();     // start the CSI-2 stream
+mercury_spi_init();
 
 // In your main loop:
-if (csi_frame_ready()) {
-    // New frame from Pico is in MERCURY_CAPTURE_BUF
-    // Convert R3G3B2 → ARGB8888 and map to DE2 VI0
-    mercury_r3g3b2_to_argb(vi0_fb, MERCURY_CAPTURE_BUF, 320, 224);
-    dcache_clean_range(vi0_fb, 320*224*4);
+uint32_t cap = csi_wait_frame(20000);   // finished frame, or 0 on timeout
+if (cap) {
+    dcache_invalidate_range(cap, MERCURY_CSI_FRAME_BYTES);
+    // sample the Pico's canvas out of the 640x480 frame (undoes 2x)
+    csi_frame_to_argb(vi_buf, (const uint8_t *)cap, 320, 224, 0);
+    dcache_clean_range((uint32_t)vi_buf, 320*224*4);
 }
+csi_mipi_status_t ms = csi_mipi_status();   // link diagnostics
 
 // Send display list to Pico:
 mercury_spi_send(display_list_buf, display_list_len);
@@ -291,8 +298,13 @@ a PC:
 
 ```bash
 cd mercury/test
-make && ./test_mercury && ./test_hstx_stream
+make && ./test_mercury && ./test_hstx_stream \
+     && ./test_csi_frame && ./test_csi_frame_uyvy
 ```
+
+`test_csi_frame` (and its UYVY build) rebuilds a captured 640x480
+CSI frame the way PicoDVI + the TC358743 produce it and checks the V3s
+sampler recovers every framebuffer pixel, at each Pico resolution.
 
 This renders the self-test cube through the display-list path to
 `mercury_selftest.png`, checks the y-clipped rasterizer pixel-for-pixel
@@ -350,7 +362,6 @@ This is Star Fox / Virtua Racing class geometry. Flat-shaded, 50-200 polygons pe
 - SPI slave receive (non-blocking, CS-framed, self-resynchronizing)
 
 ### Needs Work
-- **MIPI CSI-2 PHY configuration on V3s** — `csi_capture_init()` sets up the CSI controller (buffer, size, interrupts) but does NOT configure the MIPI PHY (lane count, data rate, protocol layer). Need a Linux register dump with a real MIPI camera to get the exact PHY register sequence. Same approach used for audio codec and CedarVE.
-- **Bridge chip I2C config** — `v3s_side/tc358743_init.h` now carries the full TC358743 sequence (transcribed from the mainline Linux driver: refclk/PHY/PLL setup, HDCP off, RGB888, 2-lane 594 Mbps CSI with the REF_02 D-PHY timing set) over the same TWI0 bus lib/si5351.c uses. Written to spec, needs a bridge board on the bench to verify — `tc358743_status()` reads SYS_STATUS for debugging (expect 0x8E with the Pico connected). The TC358748 (DVP route) equivalent is still TBD.
+- **V3s MIPI CSI-2 receive** — `v3s_side/mercury_csi_capture.h` brings up the full chain (PLL_ISP + CSI/MIPI clocks, D-PHY in RX mode, CSI-2 controller, CSI0 RAW pass-through DMA into two ping-pong buffers), transcribed from mainline Linux (phy-sun6i-mipi-dphy, sun6i-mipi-csi2, sun6i-csi, ccu-sun8i-v3s) and the V3s MIPI DT nodes. Default format RGB888; `-DMERCURY_CSI_UYVY` switches bridge and receiver to YUV422. Needs its first silicon run — the example's HUD `MIPI:` row (frame start/end packets, errors, last data type, packet count) shows how far the link gets. The frame sampler is host-tested (`test/test_csi_frame*`). (The earlier version of this header used a wrong CSI register map and reported fake frames.)
+- **Bridge chip I2C config** — `v3s_side/tc358743_init.h` now carries the full TC358743 sequence (transcribed from the mainline Linux driver: refclk/PHY/PLL setup, HDCP off, RGB888, 2-lane 594 Mbps CSI with the REF_02 D-PHY timing set) over TWI1 on PE21/PE22 (Overlay 4; `-DTC_USE_TWI0_PB67` for TWI0). Video stays muted until `tc358743_stream_on()`. Written to spec, needs a bridge board on the bench to verify — `tc358743_status()` reads SYS_STATUS for debugging (expect 0x8E with the Pico connected). The TC358748 (DVP route) equivalent is still TBD.
 - **Texture rendering** — CMD_TEXTURE uploads data but no rendering command references texture slots. Need CMD_TEXTRI or similar.
-- **R3G3B2→ARGB8888 NEON version** — `mercury_r3g3b2_to_argb()` is scalar C. A NEON version could process 16 pixels per pass.

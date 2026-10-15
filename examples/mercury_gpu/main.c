@@ -14,14 +14,19 @@
  *                Pico's self-test cube should be REPLACED by our cube
  *                (same shape, different colors/spin). That proves the
  *                whole V3s→SPI→Pico→raster path with no bridge at all.
- *   3. CSI     — NOT YET: the V3s MIPI CSI-2 receiver (D-PHY RX + the
- *                CSI-2 controller in front of CSI0) isn't brought up,
- *                so capture is never armed and the HUD reads
- *                "CSI: MIPI RX TODO". (An earlier version armed CSI0
- *                with a wrong register map: its frame-done read hit a
- *                register that echoed the init write, so it "counted"
- *                every loop and painted uninitialised DRAM into the
- *                window as red/yellow snow.)
+ *   3. CSI     — the V3s MIPI receive chain (D-PHY RX → CSI-2
+ *                controller → CSI0 DMA, mercury_csi_capture.h) takes
+ *                the bridge's 640x480 stream; each finished frame is
+ *                sampled back down to the Pico's 320x224 canvas into the
+ *                VI1 window. CSI: counts real frame-done events.
+ *                The second HUD row is the CSI-2 link itself:
+ *                  FS/FE  frame start/end packets seen (lit = arriving)
+ *                  ERR    ECC/checksum/sync errors (lit = bad link)
+ *                  DT:xx  data type of the last packet (24 = RGB888,
+ *                         1E = UYVY; 00/01 are frame start/end)
+ *                  PKT:n  packets received
+ *                Button B swaps red/blue in case the bridge's RGB888
+ *                byte order is the other way round.
  *
  * The screen itself is the README's Mercury layer stack, composited by
  * the DE2 blender in hardware:
@@ -106,6 +111,14 @@ static void draw_text(volatile uint32_t *buf, uint32_t pitch,
                             buf[(y + r * scale + sy) * pitch +
                                 (x + c * scale + sx)] = color;
     }
+}
+
+static void draw_hex2(volatile uint32_t *buf, uint32_t pitch,
+                      uint32_t v, int x, int y, uint32_t color)
+{
+    static const char hx[] = "0123456789ABCDEF";
+    char out[3] = { hx[(v >> 4) & 15], hx[v & 15], 0 };
+    draw_text(buf, pitch, out, x, y, 1, color);
 }
 
 static void draw_dec(volatile uint32_t *buf, uint32_t pitch,
@@ -253,14 +266,12 @@ static uint32_t build_cube_dl(uint8_t *dl, uint8_t angle)
  *   VI1 (SPR)      the Pico's 3D frame, a hardware-positioned window
  *   UI0 (OVL)      V3s HUD, per-pixel alpha on top
  * The DE2 blender composites all three during scanout — the only CPU
- * pixel work after boot is converting each captured R3G3B2 frame into
+ * pixel work after boot is sampling each captured CSI frame down into
  * the VI1 buffer. */
 
-/* VI1 scans SPR_ADDR (ARGB, pitch = window width). Raw R3G3B2 capture
- * lands in the top half of the same 1 MB slot — that range doubles as
- * cedar's BUF_INPUT, but this example never touches the codec. */
+/* VI1 scans SPR_ADDR (ARGB, pitch = window width). The raw CSI frames
+ * land in the two capture megabytes mercury_csi_capture.h owns. */
 #define WINDOW_BUF   SPR_ADDR
-#define CAPTURE_BUF  (SPR_ADDR + 0x80000)
 /* Pico-frame window position on the LCD */
 #define CAP_X  ((LCD_W - MERC_W) / 2)
 #define CAP_Y  20
@@ -315,8 +326,8 @@ static void draw_window_placeholder(volatile uint32_t *win)
             if ((x & 31) == 0 || (y & 31) == 0) c = 0xFF1A2130;
             win[y * MERC_W + x] = c;
         }
-    draw_text(win, MERC_W, "PICO FRAME VIA CSI - MIPI PHY TODO",
-              MERC_W / 2 - 102, MERC_H / 2 - 4, 1, COL_DIM);
+    draw_text(win, MERC_W, "WAITING FOR PICO FRAME VIA CSI",
+              MERC_W / 2 - 90, MERC_H / 2 - 4, 1, COL_DIM);
 }
 
 /* UI0: title + status strip, per-pixel alpha over everything. */
@@ -327,7 +338,8 @@ static void hud_title(volatile uint32_t *ovl)
 
 static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
                        uint32_t spi_sent, uint32_t spi_errs,
-                       int csi_ok, uint32_t csi_frames)
+                       uint32_t csi_frames, const csi_mipi_status_t *ms,
+                       uint32_t mipi_seen)
 {
     /* translucent status strip along the bottom, redrawn every second */
     int y = LCD_H - 24;
@@ -356,15 +368,27 @@ static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
     }
 
     draw_text(ovl, LCD_W, "CSI:", 316, y, 1, COL_LABEL);
-    if (!csi_ok)
-        draw_text(ovl, LCD_W, "MIPI RX TODO", 344, y, 1, COL_DIM);
-    else
-        draw_dec(ovl, LCD_W, csi_frames, 344, y, 1,
-                 csi_frames ? COL_OK : COL_DIM);
+    draw_dec(ovl, LCD_W, csi_frames, 344, y, 1,
+             csi_frames ? COL_OK : COL_DIM);
 
+    /* CSI-2 link row: what the controller saw in the last second */
     y += 12;
-    draw_text(ovl, LCD_W, "HDMI MONITOR ON PICO SHOWS THE CUBE - DUSK COLORS: V3S DRIVING",
-              8, y, 1, COL_DIM);
+    draw_text(ovl, LCD_W, "MIPI:", 8, y, 1, COL_LABEL);
+    draw_text(ovl, LCD_W, "FS", 44, y, 1,
+              (mipi_seen & MCSI_PD_FRAME_START) ? COL_OK : COL_DIM);
+    draw_text(ovl, LCD_W, "FE", 62, y, 1,
+              (mipi_seen & MCSI_PD_FRAME_END) ? COL_OK : COL_DIM);
+    draw_text(ovl, LCD_W, "ERR", 80, y, 1,
+              (mipi_seen & MCSI_PD_ERRORS) ? COL_BAD : COL_DIM);
+    draw_text(ovl, LCD_W, "DT:", 110, y, 1, COL_LABEL);
+    draw_hex2(ovl, LCD_W, ms->pkt_hdr & 0x3F, 128, y,
+              ms->pkt_count ? COL_OK : COL_DIM);
+    draw_text(ovl, LCD_W, "PKT:", 152, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, ms->pkt_count, 176, y, 1,
+             ms->pkt_count ? COL_OK : COL_DIM);
+    draw_text(ovl, LCD_W, "OVF:", 260, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, csi_overflows, 284, y, 1,
+             csi_overflows ? COL_BAD : COL_DIM);
 }
 
 /* ================================================================
@@ -399,7 +423,7 @@ int main(void)
     dcache_clean_fb(OVL_ADDR);
     video_vi1_init(CAP_X, CAP_Y, MERC_W, MERC_H);
 
-    /* --- 1. Bridge --- */
+    /* --- 1. Bridge: configured, video muted until the receiver is up --- */
     int bridge_ok = (tc358743_init() == 0);
     uart_puts(bridge_ok ? "[mercury] TC358743 init OK\n"
                         : "[mercury] TC358743 NO ACK / bad chip id\n");
@@ -415,21 +439,24 @@ int main(void)
         mercury_spi_send_displaylist(sr, sizeof(sr));
     }
 
-    /* --- 3. CSI capture: refuses (-1) until the MIPI CSI-2 receiver
-     *        exists; the window keeps its placeholder meanwhile --- */
-    csi_clocks_init();
+    /* --- 3. MIPI receive chain, then start the bridge's stream (the
+     *        D-PHY must see the lanes go LP-11 -> HS) --- */
     csi_gpio_init();
-    int csi_ok = (csi_capture_init(CAPTURE_BUF, MERCURY_RES_GENESIS) == 0);
-    uart_puts(csi_ok ? "[mercury] CSI capture armed\n"
-                     : "[mercury] CSI capture off (MIPI RX TODO)\n");
+    csi_capture_init();
+    if (bridge_ok) tc358743_stream_on();
+    uart_puts("[mercury] MIPI RX up, CSI-2 version=");
+    uart_puthex(csi_mipi_version);
+    uart_puts(bridge_ok ? ", bridge streaming\n" : ", no bridge\n");
 
     dcache_clean_fb(FB0_ADDR);
     video_swap(FB0_ADDR);
 
     uint8_t  angle = 0;
     uint32_t spi_sent = 0, spi_errs = 0, csi_frames = 0;
-    uint32_t frame = 0;
+    uint32_t frame = 0, mipi_seen = 0;
     uint8_t  st = 0;
+    int      swap_rb = 0;
+    csi_mipi_status_t ms = csi_mipi_status();
 
     while (1) {
         /* stream this frame's display list */
@@ -438,32 +465,46 @@ int main(void)
         else spi_errs++;
         angle++;
 
-        /* captured frame? convert straight into the VI1 window buffer —
-         * the blender positions and composites it in hardware */
-        if (csi_ok && csi_frame_ready()) {
+        input_poll();
+        if (input_pressed() & BTN_B) swap_rb ^= 1;
+
+        /* Wait for the next captured frame (this also paces the loop
+         * to the Pico's 60 Hz while frames flow; with no stream it
+         * times out after ~one frame). The finished buffer is ours
+         * until the next call — convert it into the VI1 window and
+         * the blender composites it in hardware. */
+        uint32_t cap = csi_wait_frame(20000);
+        if (cap) {
             csi_frames++;
-            dcache_invalidate_range(CAPTURE_BUF, MERC_W * MERC_H);
-            mercury_r3g3b2_to_argb((uint32_t *)WINDOW_BUF,
-                                   (const uint8_t *)CAPTURE_BUF,
-                                   MERC_W, MERC_H);
+            dcache_invalidate_range(cap, MERCURY_CSI_FRAME_BYTES);
+            csi_frame_to_argb((uint32_t *)WINDOW_BUF, (const uint8_t *)cap,
+                              MERC_W, MERC_H, swap_rb);
             dcache_clean_range(WINDOW_BUF, MERC_W * MERC_H * 4);
         }
 
         /* 1 Hz status refresh on the UI0 overlay */
         if ((frame++ & 63) == 0) {
             if (bridge_ok) st = tc358743_status();
+            ms = csi_mipi_status();
+            mipi_seen = ms.pending;
             hud_status(ovl, bridge_ok, st, spi_sent, spi_errs,
-                       csi_ok, csi_frames);
+                       csi_frames, &ms, mipi_seen);
             uart_puts("[mercury] status=");  uart_puthex(st);
             uart_puts(" spi=");   uart_putdec(spi_sent);
             uart_puts(" errs=");  uart_putdec(spi_errs);
             uart_puts(" csi=");   uart_putdec(csi_frames);
-            uart_puts("\n");
+            uart_puts(" ovf=");   uart_putdec(csi_overflows);
+            uart_puts("\n          mipi pd="); uart_puthex(ms.pending);
+            uart_puts(" ph=");    uart_puthex(ms.pkt_hdr);
+            uart_puts(" pkts=");  uart_putdec(ms.pkt_count);
+            uart_puts(" frm=");   uart_putdec(ms.frame_num);
+            uart_puts(" line=");  uart_putdec(ms.line_num);
+            uart_puts(" csi_sta="); uart_puthex(ms.csi_sta);
+            uart_puts(swap_rb ? " rb=swapped\n" : "\n");
             dcache_clean_range(OVL_ADDR + (LCD_H - 24) * LCD_W * 4,
                                24 * LCD_W * 4);
         }
 
-        video_wait_vblank();
     }
     return 0;
 }
