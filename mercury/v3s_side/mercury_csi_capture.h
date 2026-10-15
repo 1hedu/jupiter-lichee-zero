@@ -354,6 +354,16 @@ static inline uint32_t csi_wait_frame(uint32_t timeout_us)
     return 0;
 }
 
+/* Receiver sanity: do the enables we wrote read back? All-zero reads
+ * mean the block isn't clocked or is held in reset. */
+static inline int csi_rx_alive(void)
+{
+    return (MCSI_R(MCSI_CTL_REG) & (MCSI_CTL_RESET_N | MCSI_CTL_EN)) ==
+               (MCSI_CTL_RESET_N | MCSI_CTL_EN) &&
+           (DPHY_R(DPHY_GCTL_REG) & 1u) &&
+           (CSI_R(CSI_EN_REG) & CSI_EN_CSI_EN);
+}
+
 /* Link diagnostics: CSI-2 controller state since the previous call. */
 typedef struct {
     uint32_t pending;     /* MCSI_PD_* flags seen (then cleared) */

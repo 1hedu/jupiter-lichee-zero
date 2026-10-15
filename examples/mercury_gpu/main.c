@@ -25,7 +25,13 @@
  *                  DT:xx  data type of the last packet (24 = RGB888,
  *                         1E = UYVY; 00/01 are frame start/end)
  *                  PKT:n  packets received
- *                Button B swaps red/blue in case the bridge's RGB888
+ *                The third row is each end's own view of the link:
+ *                  IN:WxH  active size the bridge measures on HDMI
+ *                  TX/HLT  bridge CSI transmitter sending / halted
+ *                  RX      V3s receiver registers read back (DEAD =
+ *                          block unclocked or held in reset)
+ *                Button A restarts the link (receiver, then bridge
+ *                stream); B swaps red/blue in case the bridge's RGB888
  *                byte order is the other way round.
  *
  * The screen itself is the README's Mercury layer stack, composited by
@@ -274,7 +280,7 @@ static uint32_t build_cube_dl(uint8_t *dl, uint8_t angle)
 #define WINDOW_BUF   SPR_ADDR
 /* Pico-frame window position on the LCD */
 #define CAP_X  ((LCD_W - MERC_W) / 2)
-#define CAP_Y  20
+#define CAP_Y  14
 
 static uint32_t hash2(uint32_t x, uint32_t y)
 {
@@ -330,7 +336,9 @@ static void draw_window_placeholder(volatile uint32_t *win)
               MERC_W / 2 - 90, MERC_H / 2 - 4, 1, COL_DIM);
 }
 
-/* UI0: title + status strip, per-pixel alpha over everything. */
+/* UI0: title + status strip, per-pixel alpha over everything. The
+ * strip's three rows sit just below the window (CAP_Y + MERC_H). */
+#define HUD_Y  (LCD_H - 32)
 static void hud_title(volatile uint32_t *ovl)
 {
     draw_text(ovl, LCD_W, "MERCURY GPU BRING-UP", 8, 4, 1, COL_HEAD);
@@ -339,11 +347,11 @@ static void hud_title(volatile uint32_t *ovl)
 static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
                        uint32_t spi_sent, uint32_t spi_errs,
                        uint32_t csi_frames, const csi_mipi_status_t *ms,
-                       uint32_t mipi_seen)
+                       uint32_t mipi_seen, const tc358743_diag_t *td)
 {
     /* translucent status strip along the bottom, redrawn every second */
-    int y = LCD_H - 24;
-    for (uint32_t i = (uint32_t)y * LCD_W; i < LCD_W * LCD_H; i++)
+    int y = HUD_Y + 1;
+    for (uint32_t i = (uint32_t)HUD_Y * LCD_W; i < LCD_W * LCD_H; i++)
         ovl[i] = 0xC010141E;
 
     draw_text(ovl, LCD_W, "BRIDGE:", 8, y, 1, COL_LABEL);
@@ -372,7 +380,7 @@ static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
              csi_frames ? COL_OK : COL_DIM);
 
     /* CSI-2 link row: what the controller saw in the last second */
-    y += 12;
+    y += 10;
     draw_text(ovl, LCD_W, "MIPI:", 8, y, 1, COL_LABEL);
     draw_text(ovl, LCD_W, "FS", 44, y, 1,
               (mipi_seen & MCSI_PD_FRAME_START) ? COL_OK : COL_DIM);
@@ -389,12 +397,42 @@ static void hud_status(volatile uint32_t *ovl, int bridge_ok, uint8_t st,
     draw_text(ovl, LCD_W, "OVF:", 260, y, 1, COL_LABEL);
     draw_dec(ovl, LCD_W, csi_overflows, 284, y, 1,
              csi_overflows ? COL_BAD : COL_DIM);
+
+    /* Link row: both ends' own view. IN = active size the bridge
+     * measured on its HDMI input, TX = bridge's CSI transmitter
+     * sending, HLT = it halted on an error, RX = the V3s receiver's
+     * enables read back (DEAD = block unclocked / in reset). */
+    y += 10;
+    draw_text(ovl, LCD_W, "LINK:", 8, y, 1, COL_LABEL);
+    draw_text(ovl, LCD_W, "IN:", 44, y, 1, COL_LABEL);
+    uint32_t in_ok = td->width == 640 && td->height == 480;
+    draw_dec(ovl, LCD_W, td->width, 62, y, 1, in_ok ? COL_OK : COL_BAD);
+    draw_text(ovl, LCD_W, "X", 86, y, 1, COL_LABEL);
+    draw_dec(ovl, LCD_W, td->height, 92, y, 1, in_ok ? COL_OK : COL_BAD);
+    draw_text(ovl, LCD_W, "TX", 122, y, 1,
+              (td->csi_status & TC_MASK_S_TXACT) ? COL_OK : COL_DIM);
+    draw_text(ovl, LCD_W, "HLT", 140, y, 1,
+              (td->csi_status & TC_MASK_S_HLT) ? COL_BAD : COL_DIM);
+    draw_text(ovl, LCD_W, "RX:", 170, y, 1, COL_LABEL);
+    if (csi_rx_alive())
+        draw_text(ovl, LCD_W, "OK", 188, y, 1, COL_OK);
+    else
+        draw_text(ovl, LCD_W, "DEAD", 188, y, 1, COL_BAD);
+    draw_text(ovl, LCD_W, "A:RELINK  B:SWAP R-B", 236, y, 1, COL_DIM);
 }
 
 /* ================================================================
  * Main
  * ================================================================ */
 static uint8_t dl_buf[512];
+
+/* (Re)start the CSI-2 link in Linux's order: receiver configured
+ * first, then the bridge's LP-11 -> HS stream start. */
+static void link_start(int bridge_ok)
+{
+    csi_capture_init();
+    if (bridge_ok) tc358743_stream_on();
+}
 
 int main(void)
 {
@@ -442,8 +480,7 @@ int main(void)
     /* --- 3. MIPI receive chain, then start the bridge's stream (the
      *        D-PHY must see the lanes go LP-11 -> HS) --- */
     csi_gpio_init();
-    csi_capture_init();
-    if (bridge_ok) tc358743_stream_on();
+    link_start(bridge_ok);
     uart_puts("[mercury] MIPI RX up, CSI-2 version=");
     uart_puthex(csi_mipi_version);
     uart_puts(bridge_ok ? ", bridge streaming\n" : ", no bridge\n");
@@ -457,6 +494,7 @@ int main(void)
     uint8_t  st = 0;
     int      swap_rb = 0;
     csi_mipi_status_t ms = csi_mipi_status();
+    tc358743_diag_t td = {0};
 
     while (1) {
         /* stream this frame's display list */
@@ -467,6 +505,10 @@ int main(void)
 
         input_poll();
         if (input_pressed() & BTN_B) swap_rb ^= 1;
+        if (input_pressed() & BTN_A) {
+            uart_puts("[mercury] relink\n");
+            link_start(bridge_ok);
+        }
 
         /* Wait for the next captured frame (this also paces the loop
          * to the Pico's 60 Hz while frames flow; with no stream it
@@ -484,11 +526,14 @@ int main(void)
 
         /* 1 Hz status refresh on the UI0 overlay */
         if ((frame++ & 63) == 0) {
-            if (bridge_ok) st = tc358743_status();
+            if (bridge_ok) {
+                st = tc358743_status();
+                td = tc358743_diag();
+            }
             ms = csi_mipi_status();
             mipi_seen = ms.pending;
             hud_status(ovl, bridge_ok, st, spi_sent, spi_errs,
-                       csi_frames, &ms, mipi_seen);
+                       csi_frames, &ms, mipi_seen, &td);
             uart_puts("[mercury] status=");  uart_puthex(st);
             uart_puts(" spi=");   uart_putdec(spi_sent);
             uart_puts(" errs=");  uart_putdec(spi_errs);
@@ -501,8 +546,27 @@ int main(void)
             uart_puts(" line=");  uart_putdec(ms.line_num);
             uart_puts(" csi_sta="); uart_puthex(ms.csi_sta);
             uart_puts(swap_rb ? " rb=swapped\n" : "\n");
-            dcache_clean_range(OVL_ADDR + (LCD_H - 24) * LCD_W * 4,
-                               24 * LCD_W * 4);
+            uart_puts("          bridge in=");  uart_putdec(td.width);
+            uart_puts("x");      uart_putdec(td.height);
+            uart_puts(" csi_status="); uart_puthex(td.csi_status);
+            uart_puts(" csi_err=");    uart_puthex(td.csi_err);
+            uart_puts(" confctl=");    uart_puthex(td.confctl);
+            uart_puts("\n          rx ctl=");   uart_puthex(MCSI_R(MCSI_CTL_REG));
+            uart_puts(" cfg=");     uart_puthex(MCSI_R(MCSI_CFG_REG));
+            uart_puts(" vcdt=");    uart_puthex(MCSI_R(MCSI_VCDT_RX_REG));
+            uart_puts(" dphy gctl="); uart_puthex(DPHY_R(DPHY_GCTL_REG));
+            uart_puts(" rxctl=");   uart_puthex(DPHY_R(DPHY_RX_CTL_REG));
+            uart_puts(" dbg=");     uart_puthex(DPHY_R(0xF0));
+            uart_puts(",");         uart_puthex(DPHY_R(0xF4));
+            uart_puts(",");         uart_puthex(DPHY_R(0xF8));
+            uart_puts(",");         uart_puthex(DPHY_R(0xFC));
+            uart_puts(" csi en=");  uart_puthex(CSI_R(CSI_EN_REG));
+            uart_puts(" ccu134=");  uart_puthex(CCU_R(0x134));
+            uart_puts(" ccu16c=");  uart_puthex(CCU_R(0x16C));
+            uart_puts(" pll_isp="); uart_puthex(CCU_R(0x02C));
+            uart_puts("\n");
+            dcache_clean_range(OVL_ADDR + HUD_Y * LCD_W * 4,
+                               (LCD_H - HUD_Y) * LCD_W * 4);
         }
 
     }

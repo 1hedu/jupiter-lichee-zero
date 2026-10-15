@@ -224,8 +224,15 @@ Uses I2C1 (TWI1) on PE21/PE22 — avoids conflict with Genesis D5 on PB6.
 
 | TC358743 FPC Pin | Signal | Lichee Pi 2.54mm Pin |
 |---|---|---|
-| Pin 11 | SDA | Pin 4 (PE22 / TWI1_SDA) |
-| Pin 12 | SCL | Pin 2 (PE21 / TWI1_SCK) |
+| Pin 14 | SDA | Pin 4 (PE22 / TWI1_SDA) |
+| Pin 13 | SCL | Pin 2 (PE21 / TWI1_SCK) |
+
+(Raspberry Pi 15-pin camera pinout: 1 GND, 2 D0-, 3 D0+, 4 GND, 5 D1-,
+6 D1+, 7 GND, 8 CLK-, 9 CLK+, 10 GND, 11 IO0, 12 IO1, 13 SCL, 14 SDA,
+15 3V3. Pins 11/12 are camera GPIOs, not I2C — an earlier revision of
+this table had that wrong. FPC breakouts and cables can mirror the
+numbering (pin 1 <-> 15): if I2C works on the board's labelled SDA/SCL,
+the lane pins follow that same labelling.)
 
 I2C0 (PB6/PB7) remains available for Si5351 clock generator.
 

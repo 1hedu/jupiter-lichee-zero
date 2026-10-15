@@ -84,6 +84,8 @@
 #define TC_HSTXVREGCNT     0x0230
 #define TC_HSTXVREGEN      0x0234
 #define TC_TXOPTIONCNTRL   0x0238
+#define TC_CSI_STATUS      0x0410   /* CSI TX state (read) */
+#define TC_CSI_ERR         0x044C   /* CSI TX error flags (read) */
 #define TC_CSI_CONFW       0x0500
 #define TC_CSI_START       0x0518
 /* HDMI RX (8-bit registers) */
@@ -111,6 +113,10 @@
 #define TC_FH_MAX0         0x85AC
 #define TC_FH_MAX1         0x85AD
 #define TC_HV_RST          0x85AF
+#define TC_DE_WIDTH_H_LO   0x8582   /* detected active width */
+#define TC_DE_WIDTH_H_HI   0x8583
+#define TC_DE_WIDTH_V_LO   0x8588   /* detected active height */
+#define TC_DE_WIDTH_V_HI   0x8589
 #define TC_EDID_MODE       0x85C7
 /* HDMI audio (8-bit) — configured to driver defaults, all muted */
 #define TC_FORCE_MUTE      0x8600
@@ -179,6 +185,11 @@
 #define TC_MASK_AUTO_MUTE       0xC0
 #define TC_MASK_VI_MUTE         0x10
 #define TC_MASK_CONTCLKMODE     0x00000001u
+
+/* CSI_STATUS bits */
+#define TC_MASK_S_WSYNC    0x0400      /* waiting for sync */
+#define TC_MASK_S_TXACT    0x0200      /* CSI TX actively sending */
+#define TC_MASK_S_HLT      0x0001      /* CSI TX halted */
 
 /* SYS_STATUS bits — the debug window into the HDMI RX */
 #define TC_MASK_S_SYNC     0x80        /* video sync locked */
@@ -522,6 +533,34 @@ static inline void tc358743_stream_on(void)
     tc_wr32(TC_TXOPTIONCNTRL, TC_MASK_CONTCLKMODE);
     tc_wr8(TC_VI_MUTE, TC_MASK_AUTO_MUTE);
     tc_wr16(TC_CONFCTL, tc_rd16(TC_CONFCTL) | TC_MASK_VBUFEN);
+}
+
+/*
+ * Debug: what the bridge thinks it's doing — the active size the HDMI
+ * receiver measured (640x480 from a healthy Pico) and the CSI TX state
+ * (TXACT = sending packets, HLT = halted on an error).
+ */
+typedef struct {
+    uint16_t width, height;
+    uint16_t csi_status;
+    uint32_t csi_err;
+    uint16_t confctl;
+} tc358743_diag_t;
+
+static inline tc358743_diag_t tc358743_diag(void)
+{
+    tc358743_diag_t d;
+    uint8_t b[4] = {0, 0, 0, 0};
+    d.width  = (uint16_t)(((tc_rd8(TC_DE_WIDTH_H_HI) & 0x1F) << 8) |
+                          tc_rd8(TC_DE_WIDTH_H_LO));
+    d.height = (uint16_t)(((tc_rd8(TC_DE_WIDTH_V_HI) & 0x1F) << 8) |
+                          tc_rd8(TC_DE_WIDTH_V_LO));
+    d.csi_status = tc_rd16(TC_CSI_STATUS);
+    tc_rd(TC_CSI_ERR, b, 4);
+    d.csi_err = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    d.confctl = tc_rd16(TC_CONFCTL);
+    return d;
 }
 
 /*
