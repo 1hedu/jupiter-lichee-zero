@@ -1,5 +1,11 @@
 # SDK review — obvious bugs + proposed cleanup/additions
 
+> **PINE64 port context:** this is the original V3s review and its historical
+> findings. The A64 board implementation keeps its validated SD2 entry,
+> 2 GiB memory map, separate exception stacks and 12 MHz SD clock. Equivalent
+> input, memory, storage and timer fixes are reconciled in `boards/pine64/`;
+> V3s peripheral addresses and clock assumptions are not copied onto A64.
+
 > **Status update:** everything in §1 (bugs), §2 (doc rot), and §3
 > (cleanup) has been fixed in the commit that follows this doc on this
 > branch — except the SD 50 MHz clock (left as-is, verified working on

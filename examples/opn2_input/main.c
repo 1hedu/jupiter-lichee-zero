@@ -18,7 +18,11 @@
 #include "pmu.h"
 #include <string.h>
 #include "../../libvgm/vgm_player.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "../../examples/opn2_rt/fighting_back.h"
+#endif
 
 /* Pre-converted tile data */
 #include "../../examples/cedar_nes/vinci_chr.h"

@@ -23,6 +23,9 @@ int main(void)
     uart_puts("  CedarVE H.264 Decode Test\n");
     uart_puts("========================================\n\n");
 
+#ifndef JUPITER_BOARD_PINE64
+    /* V3s diagnostic scan. PINE only accesses VE after its driver has
+     * confirmed the clock/reset sequence; a failed init stays inert. */
     /* Quick engine scan — check what's alive with H264 selected */
     REG32(0x01C0E000) = 0x00130001; /* H264 */
     uart_puts("[scan] H264 +0x228=0x"); uart_puthex(REG32(0x01C0E228));
@@ -36,6 +39,7 @@ int main(void)
     }
     uart_puts("\n");
     REG32(0x01C0E000) = 0x00130007; /* idle */
+#endif
 
     /* Init display BEFORE decoding — video_init() clears the DRAM
      * region the cedar buffers live in, so decoding first would have
@@ -86,6 +90,10 @@ int main(void)
     video_swap(FB0_ADDR);
 
     uart_puts("[main] done\n");
-    while (1);
+    while (1) {
+#ifdef JUPITER_BOARD_PINE64
+        pine64_service(); /* Keep Escape/F12/serial reboot available. */
+#endif
+    }
     return 0;
 }

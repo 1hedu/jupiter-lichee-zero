@@ -1,3 +1,6 @@
+#ifdef JUPITER_BOARD_PINE64
+#include "../mercury_pine64/main.c"
+#else
 /*
  * Mercury GPU bring-up — the V3s side of the Pico polygon coprocessor
  *
@@ -670,3 +673,5 @@ int main(void)
     }
     return 0;
 }
+
+#endif /* JUPITER_BOARD_PINE64 */

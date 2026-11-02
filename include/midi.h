@@ -1,25 +1,31 @@
 /*
- * Jupiter SDK — MIDI byte-stream layer over UART1
+ * Jupiter SDK — MIDI byte-stream layer over the board MIDI UART
  *
  * Provides a MIDI-rate (31250 baud) bidirectional MIDI port on
- * PE21 (TX) / PE22 (RX). TX is blocking; RX is interrupt-driven
- * into a ring buffer that the main loop drains.
+ * V3s PE21 (TX) / PE22 (RX), or PINE A64+ UART2 PB0 (TX) /
+ * PB1 (RX), Pi-2 header pins 8 / 10. TX is blocking; RX is
+ * interrupt-driven into a ring buffer that the main loop drains.
  *
  * Overlay 6 (Studio Station) wires PE21/22 to a 5-pin DIN-5 MIDI
  * pair via an opto-isolator on RX and a current-limiting resistor
- * on TX. See docs/MIDI_HW_GUIDE.md for the wiring.
+ * on TX. See docs/MIDI_HW_GUIDE.md for that V3s overlay; PINE needs
+ * an appropriate 3.3 V MIDI interface on its own pins. Raw UART
+ * pins are not a DIN MIDI electrical interface.
  */
 #ifndef MIDI_H
 #define MIDI_H
 
 #include <stdint.h>
 
-/* Bring up UART1 at 31250 baud, claim PE21/PE22, enable RX IRQ.
+/* Bring up the board MIDI UART at 31250 baud and enable its RX IRQ.
+ * PINE uses UART2/IRQ34 and the validated SD2 APB2 clock at 24 MHz.
  * Call once at boot. Idempotent. */
 void midi_init(void);
 
 /* Blocking TX. Used to push SysEx dumps + regular MIDI messages out
- * the wire. Each byte waits for the TX FIFO to have room. */
+ * the wire. Each byte waits for the TX FIFO to have room. On PINE,
+ * a 10 ms deadline plus finite poll cap aborts a stalled transfer and
+ * reports the failure over UART0. */
 void midi_send(const uint8_t *bytes, uint32_t len);
 
 /* Non-blocking RX. Returns 1 and writes one byte to *out if a byte

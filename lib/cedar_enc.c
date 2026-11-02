@@ -1,6 +1,8 @@
 /*
  * Jupiter SDK — cedar_enc.c
  * CedarVE H.264 encoder for V3s, ported from Bootlin cedrus_enc_h264.c.
+ * PINE64 uses a portable I_PCM encoder until its separate A64 hardware
+ * encoder sequence has been verified. Both paths emit standard H.264.
  *
  * Complete register sequence for I-frame encoding:
  *   1. Encoder reset + ISP enable
@@ -12,10 +14,24 @@
  */
 #include "jupiter.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "../boards/pine64/cedar_ipcm.h"
+static uint32_t converted_width, converted_height;
+#endif
 
 #define VE_BASE  0x01C0E000
 #define VE(off)  REG32(VE_BASE + (off))
 
+#ifdef JUPITER_BOARD_PINE64
+/* Dedicated A64 Cedar arena, shared with decoder planes. No V3s-only
+ * ISP/AVC scratch buffers are touched by the CPU I_PCM encoder. */
+#define ENC_STREAM_ADDR   0x43700000u
+#define ENC_STREAM_SIZE   0x00100000u
+#define ENC_NV12_Y        0x43100000u
+#define ENC_NV12_C        0x43200000u
+#define ENC_NV12_Y_SIZE   0x00080000u
+#define ENC_NV12_C_SIZE   0x00040000u
+#else
 /* Encoder buffers — all DRAM addresses used by VE are DMA (physical).
  *
  * They live in the unused top halves of the VRAM display slots and in
@@ -45,6 +61,7 @@
 #define ENC_NV12_C_SIZE   0x40000
 #define ENC_REC_Y_SIZE    0x80000
 #define ENC_REC_C_SIZE    0x60000
+#endif
 
 /* Register offsets (from Bootlin cedrus_regs.h) */
 #define AVC_PARA0         0xB04
@@ -94,10 +111,24 @@
 void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
                         uint32_t w, uint32_t h)
 {
+#ifdef JUPITER_BOARD_PINE64
+    converted_width = converted_height = 0;
+    if (!src || !w || !h || (w & 1u) || (h & 1u) ||
+        w > 512u || h > 1024u || src_pitch < w || src_pitch > UINT32_MAX / h) {
+        uart_puts("[cedar/pine64] invalid ARGB input dimensions\n");
+        return;
+    }
+#endif
     uint32_t stride = (w + 15) & ~15;
     uint32_t h16 = (h + 15) & ~15;
     uint8_t *Y  = (uint8_t *)ENC_NV12_Y;
     uint8_t *UV = (uint8_t *)ENC_NV12_C;
+#ifdef JUPITER_BOARD_PINE64
+    /* I_PCM includes complete macroblocks, including any padded rows. */
+    uint32_t padded_size = stride * ((h + 15u) & ~15u);
+    memset(Y, 16, padded_size);
+    memset(UV, 128, padded_size / 2);
+#endif
 
     if (stride * h16 > ENC_NV12_Y_SIZE) {
         uart_puts("[cedar] argb_to_nv12: frame too large\n");
@@ -137,8 +168,13 @@ void cedar_argb_to_nv12(const uint32_t *src, uint32_t src_pitch,
     uint32_t luma_sz = stride * h16;
     dcache_clean_range(ENC_NV12_Y, luma_sz);
     dcache_clean_range(ENC_NV12_C, luma_sz / 2);
+#ifdef JUPITER_BOARD_PINE64
+    converted_width = w;
+    converted_height = h;
+#endif
 }
 
+#ifndef JUPITER_BOARD_PINE64
 /* ================================================================== */
 /* put_bits with polling (Bootlin: cedrus_enc_h264_coded_append)        */
 /* ================================================================== */
@@ -450,6 +486,37 @@ int cedar_h264_encode(uint32_t w, uint32_t h, int qp)
     uart_puts("[cedar] encode FAIL\n");
     return -1;
 }
+#else
+const char *pine64_cedar_encode_path(void)
+{
+    return "CPU I_PCM encode / Cedar decode";
+}
+
+int cedar_h264_encode(uint32_t w, uint32_t h, int qp)
+{
+    if (w != converted_width || h != converted_height) {
+        uart_puts("[cedar/pine64] convert the atlas before encoding\n");
+        return -1;
+    }
+    /* No V3s ISP/AVC register writes or working buffers on A64. This also
+     * preserves the 448x928 ARGB atlas at 0x43400000..0x43596000, which
+     * overlaps the V3s encoder's MB-info/reconstruction scratch area. */
+    int bytes = pine64_h264_ipcm((const uint8_t *)ENC_NV12_Y,
+                                 (const uint8_t *)ENC_NV12_C,
+                                 (w + 15u) & ~15u, w, h, qp,
+                                 (uint8_t *)ENC_STREAM_ADDR, ENC_STREAM_SIZE);
+    if (bytes < 0) {
+        uart_puts("[cedar/pine64] CPU I_PCM encode failed\n");
+        return bytes;
+    }
+    dcache_clean_range(ENC_STREAM_ADDR, (uint32_t)bytes);
+    uart_puts("[cedar/pine64] CPU I_PCM encode / Cedar decode: ");
+    uart_putdec((uint32_t)bytes);
+    uart_puts(" bytes, NV12 samples preserved without compression\n");
+    return bytes;
+}
+#endif
+
 
 /* Where the encoded bitstream lands. Exposed so callers don't hardcode
  * the address (the examples used to carry a stale 0x43700000). */

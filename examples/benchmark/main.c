@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../../boards/pine64/demos/benchmark.inc"
+#else
 /*
  * Jupiter SDK — Hardware Diagnostic + Benchmark Suite v2
  *
@@ -693,3 +696,5 @@ void main(void)
 
     while (1) __asm__ volatile("wfi");
 }
+
+#endif /* JUPITER_BOARD_PINE64 */

@@ -17,6 +17,9 @@
 #include "input.h"
 #include "pmu.h"
 #include "hstimer.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+#endif
 #include <string.h>
 #include <stddef.h>
 
@@ -113,7 +116,11 @@ void main(void)
 
     /* hstimer-driven mix tick at ~1.87 ms (32 scanlines). */
     hstimer_init();
+#ifdef JUPITER_BOARD_PINE64
+    pine64_hstimer_set_us((32u * 175u + 2u) / 3u, 0, audio_mix_tick);
+#else
     hstimer_set_repeating(0, 32, audio_mix_tick);
+#endif
 
     /* ---- Copy audio into a heap buffer ---- */
     const uint8_t *audio_src = _binary_build_title_vbin_start

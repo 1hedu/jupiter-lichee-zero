@@ -16,11 +16,24 @@
 #include "jupiter.h"
 #include "nuked_sc55.h"
 
+#ifdef JUPITER_BOARD_PINE64
+#include "assets.h"
+#include "runtime.h"
+#include <stdlib.h>
+static uint8_t *sc55_rom1, *sc55_rom2, *sc55_waverom1, *sc55_waverom2, *sc55_rom_sm;
+static uint32_t sc55_rom1_len, sc55_rom2_len, sc55_waverom1_len, sc55_waverom2_len, sc55_rom_sm_len;
+static void free_sc55_roms(void)
+{
+    free(sc55_rom1); free(sc55_rom2); free(sc55_waverom1); free(sc55_waverom2); free(sc55_rom_sm);
+    sc55_rom1 = sc55_rom2 = sc55_waverom1 = sc55_waverom2 = sc55_rom_sm = NULL;
+}
+#else
 #include "sc55_rom1.h"
 #include "sc55_rom2.h"
 #include "sc55_waverom1.h"
 #include "sc55_waverom2.h"
 #include "sc55_rom_sm.h"
+#endif
 #include "human1.h"
 
 /* ================================================================
@@ -217,6 +230,27 @@ void main(void)
     uart_puts("Real Roland SC-55 mkII emulation, pre-rendered to DRAM.\n\n");
 
     cpp_init();
+#ifdef JUPITER_BOARD_PINE64
+    video_init();
+    pine64_status("SC-55 WARCRAFT MUSIC", "Loading SC-55 mkII ROM set from SD...");
+    sc55_rom1 = pine64_load_asset("0:/ROMS/SC55/ROM1.BIN", 0x8000, 0x8000, &sc55_rom1_len);
+    sc55_rom2 = pine64_load_asset("0:/ROMS/SC55/ROM2.BIN", 0x80000, 0x80000, &sc55_rom2_len);
+    sc55_waverom1 = pine64_load_asset("0:/ROMS/SC55/WAVE1.BIN", 0x200000, 0x200000, &sc55_waverom1_len);
+    sc55_waverom2 = pine64_load_asset("0:/ROMS/SC55/WAVE2.BIN", 0x100000, 0x100000, &sc55_waverom2_len);
+    sc55_rom_sm = pine64_load_asset("0:/ROMS/SC55/SUBCPU.BIN", 0x1000, 0x1000, &sc55_rom_sm_len);
+    if (!sc55_rom1 || !sc55_rom2 || !sc55_waverom1 || !sc55_waverom2 || !sc55_rom_sm) {
+        free_sc55_roms();
+        pine64_notice("SC-55 MKII ROM FILES REQUIRED",
+            "Copy your SC-55 mkII files to JUPITER data partition:\n\n"
+            "ROMS/SC55/ROM1.BIN     32768 bytes\n"
+            "ROMS/SC55/ROM2.BIN    524288 bytes\n"
+            "ROMS/SC55/WAVE1.BIN  2097152 bytes\n"
+            "ROMS/SC55/WAVE2.BIN  1048576 bytes\n"
+            "ROMS/SC55/SUBCPU.BIN    4096 bytes\n\n"
+            "Press Z/Enter or X to return.");
+        return;
+    }
+#endif
     audio_init();
 
     /* ---- SC-55 bring-up ---- */
@@ -227,7 +261,12 @@ void main(void)
                        sc55_waverom1, sc55_waverom1_len,
                        sc55_waverom2, sc55_waverom2_len,
                        sc55_rom_sm,   sc55_rom_sm_len);
+#ifdef JUPITER_BOARD_PINE64
+    free_sc55_roms(); /* sc55_init copies/unscrambles each ROM into its own state. */
+    if (rc != 0) { pine64_notice("SC-55 ROM SET REJECTED", "The ROM buffers do not match the mkII model."); return; }
+#else
     if (rc != 0) { uart_puts("FAIL\n"); while (1); }
+#endif
     uart_puts("ok ("); uart_putdec(ticks_to_us(timer_elapsed(t0, timer_read())) / 1000); uart_puts(" ms)\n");
     uart_puts("native rate: "); uart_putdec(sc55_native_rate()); uart_puts(" Hz\n");
 
@@ -236,10 +275,10 @@ void main(void)
     recorded_pos = 0;
     resamp_accum = 0;
 
-    /* Run the SC-55 boot sequence for ~50 ms of emulated time so its
-     * GM-mode init has a chance to settle before we start sending MIDI. */
+    /* The firmware changes PCM clocking during startup. Give it one
+     * second of actual emulated MCU time before posting song MIDI. */
     uart_puts("Warming up SC-55 (boot ROM init)...\n");
-    sc55_render(IN_RATE / 20);  /* ~50ms emulated */
+    sc55_warmup(1000);
     /* Discard those samples — they're SC-55 startup pop, not music. */
     recorded_pos = 0;
     resamp_accum = 0;
@@ -261,7 +300,13 @@ void main(void)
     /* Render in chunks. After each chunk, advance SMF events whose time
      * has come (using cur_us derived from output frame count). */
     const uint32_t CHUNK_OUT = 256;  /* output frames per chunk */
+#ifdef JUPITER_BOARD_PINE64
+    pine64_status("SC-55 WARCRAFT MUSIC", "Rendering 25 seconds of audio into RAM.\nThis demo renders ahead of playback.\nProgress is printed over serial.\nEscape or F12 returns to the menu.");
+#endif
     while (recorded_pos < RECORDED_FRAMES) {
+#ifdef JUPITER_BOARD_PINE64
+        pine64_service();
+#endif
         /* Translate output-rate sample count to input samples we need
          * to produce in this chunk. With nearest-neighbor we need
          * roughly CHUNK_OUT * IN_RATE/OUT_RATE input samples. */
@@ -311,6 +356,10 @@ void main(void)
     }
     uart_puts("% of real-time speed)\n");
 
+#ifdef JUPITER_BOARD_PINE64
+    if (!recorded_pos) { pine64_notice("SC-55 DID NOT PRODUCE AUDIO", "Check the supplied ROM set. No samples were recorded."); return; }
+    pine64_status("SC-55 WARCRAFT MUSIC", "Playing the rendered Warcraft soundtrack excerpt.\nStereo output: onboard 3.5 mm jack.\nEscape or F12 reboots to the menu.");
+#endif
     /* ---- Playback ---- */
     uart_puts("\nStarting playback at 48000 Hz. Looping forever.\n");
     audio_set_rate(48000);
@@ -322,6 +371,9 @@ void main(void)
 
     while (1) {
         playback_fill(TARGET_DEPTH);
+#ifdef JUPITER_BOARD_PINE64
+        audio_update();
+#endif
         /* Tiny pause between fill iterations to avoid hot-spinning */
         for (volatile int i = 0; i < 1000; i++) ;
     }

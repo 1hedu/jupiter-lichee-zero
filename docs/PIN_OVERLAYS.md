@@ -1,5 +1,15 @@
 # Jupiter SDK — Pin Overlay Configurations
 
+**Board scope:** these numbered overlays describe the original Lichee Pi
+Zero / V3s. For PINE A64+ 2 GB, use the dedicated
+[PINE wiring guide](WIRING_GUIDE.md#pine-a64-2-gb-mercury-board-port-wiring)
+and [external-device mapping](../boards/pine64/EXTERNAL.md). PINE Mercury
+uses PC0 MOSI, PC2 SCK and PC3 CS (Pi-2 pins 19/23/24) to the existing
+SpotPear Pico GP4/GP6/GP5. PC1/MISO and PC4 are untouched; there is no READY
+line. These pins overlap the PINE YM3438 adapter. The A64 camera port is
+parallel CSI, so Overlay 4's TC358743 MIPI CSI-2 return path is V3s-specific.
+The working Pico TV firmware and its HDMI wiring are retained.
+
 The V3s has more peripheral functions than physical pins. The
 controllers, the YM3438 data bus, the Mars Pico interface, the MIDI
 UART, and the SDC0 SD slot all want some of the same GPIO. So we

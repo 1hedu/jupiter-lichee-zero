@@ -1,0 +1,10 @@
+TinyUSB 0.18.0
+https://github.com/hathach/tinyusb
+Commit: 86ad6e56c1700e85f1c5678607a762cfe3aa2f47
+License: MIT (see LICENSE and source headers).
+Vendored subset: common, host, HID, OS abstraction, OHCI.
+PINE64 changes: portable/ohci/ohci.c uses a selected A64 controller base,
+independent timeouts, explicit DMA barriers and controller deinitialization.
+No NXP chip headers or NVIC calls; interrupt service is polled.
+HID input callbacks report zero bytes on a failed transfer instead of
+passing stale DMA buffer contents to the keyboard decoder.

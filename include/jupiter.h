@@ -6,7 +6,11 @@
 #ifndef JUPITER_H
 #define JUPITER_H
 
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64.h"
+#else
 #include "v3s.h"
+#endif
 
 /* ---- uart.c ---- */
 void uart_putc(char c);
@@ -250,8 +254,9 @@ static inline void clear_rect(volatile uint32_t *buf, uint32_t pitch,
 }
 
 /* ---- cedar.c + cedar_enc.c ----
- * Call video_init() before any encode/decode work: it clears the DRAM
- * region the codec buffers live in. Decode output and encode input are
+ * Call video_init() before any encode/decode work: on V3s it clears the
+ * DRAM region the codec buffers live in. PINE uses a dedicated Cedar
+ * arena outside the display buffers. Decode output and encode input are
  * internal fixed buffers; the encoded bitstream address comes from
  * cedar_enc_stream_addr(). Max frame: the working buffers bound the
  * mb-aligned luma plane to 512KB (e.g. 512x1024 or 448x928). */

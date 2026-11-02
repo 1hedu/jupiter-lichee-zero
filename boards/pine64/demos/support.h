@@ -1,0 +1,123 @@
+/* Small diagnostic text, using the menu font. */
+#ifndef PINE64_DEMO_SUPPORT_H
+#define PINE64_DEMO_SUPPORT_H
+#include "jupiter.h"
+#include "input.h"
+#define PINE_DEMO_FNT_W 5
+#define PINE_DEMO_FNT_H 7
+typedef struct { char ch; uint8_t cols[PINE_DEMO_FNT_W]; } pine_demo_glyph_t;
+
+static const pine_demo_glyph_t pine_demo_font[] = {
+    {' ', {0x00,0x00,0x00,0x00,0x00}},
+    {'A', {0x7E,0x09,0x09,0x09,0x7E}},
+    {'B', {0x7F,0x49,0x49,0x49,0x36}},
+    {'C', {0x3E,0x41,0x41,0x41,0x22}},
+    {'D', {0x7F,0x41,0x41,0x22,0x1C}},
+    {'E', {0x7F,0x49,0x49,0x49,0x41}},
+    {'F', {0x7F,0x09,0x09,0x09,0x01}},
+    {'G', {0x3E,0x41,0x49,0x49,0x7A}},
+    {'H', {0x7F,0x08,0x08,0x08,0x7F}},
+    {'I', {0x00,0x41,0x7F,0x41,0x00}},
+    {'J', {0x20,0x40,0x41,0x3F,0x01}},
+    {'K', {0x7F,0x08,0x14,0x22,0x41}},
+    {'L', {0x7F,0x40,0x40,0x40,0x40}},
+    {'M', {0x7F,0x02,0x0C,0x02,0x7F}},
+    {'N', {0x7F,0x04,0x08,0x10,0x7F}},
+    {'O', {0x3E,0x41,0x41,0x41,0x3E}},
+    {'P', {0x7F,0x09,0x09,0x09,0x06}},
+    {'Q', {0x3E,0x41,0x51,0x21,0x5E}},
+    {'R', {0x7F,0x09,0x19,0x29,0x46}},
+    {'S', {0x46,0x49,0x49,0x49,0x31}},
+    {'T', {0x01,0x01,0x7F,0x01,0x01}},
+    {'U', {0x3F,0x40,0x40,0x40,0x3F}},
+    {'V', {0x1F,0x20,0x40,0x20,0x1F}},
+    {'W', {0x7F,0x20,0x18,0x20,0x7F}},
+    {'X', {0x63,0x14,0x08,0x14,0x63}},
+    {'Y', {0x07,0x08,0x70,0x08,0x07}},
+    {'Z', {0x61,0x51,0x49,0x45,0x43}},
+    {'0', {0x3E,0x51,0x49,0x45,0x3E}},
+    {'1', {0x00,0x42,0x7F,0x40,0x00}},
+    {'2', {0x42,0x61,0x51,0x49,0x46}},
+    {'3', {0x21,0x41,0x45,0x4B,0x31}},
+    {'4', {0x18,0x14,0x12,0x7F,0x10}},
+    {'5', {0x27,0x45,0x45,0x45,0x39}},
+    {'6', {0x3C,0x4A,0x49,0x49,0x30}},
+    {'7', {0x01,0x71,0x09,0x05,0x03}},
+    {'8', {0x36,0x49,0x49,0x49,0x36}},
+    {'9', {0x06,0x49,0x49,0x29,0x1E}},
+    {'-', {0x08,0x08,0x08,0x08,0x08}},
+    {':', {0x00,0x24,0x00,0x00,0x00}},
+    {'.', {0x00,0x40,0x00,0x00,0x00}},
+    {'/', {0x20,0x10,0x08,0x04,0x02}},
+    {'+', {0x08,0x08,0x3E,0x08,0x08}},
+    {'_', {0x40,0x40,0x40,0x40,0x40}},
+    {'(', {0x00,0x1C,0x22,0x41,0x00}},
+    {')', {0x00,0x41,0x22,0x1C,0x00}},
+};
+#define PINE_DEMO_FONT_N (sizeof(pine_demo_font)/sizeof(pine_demo_font[0]))
+
+static inline const uint8_t *pine_demo_glyph_for(char c)
+{
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    for (uint32_t i = 0; i < PINE_DEMO_FONT_N; i++)
+        if (pine_demo_font[i].ch == c) return pine_demo_font[i].cols;
+    return pine_demo_font[0].cols;
+}
+
+static inline void pine_demo_draw_text(uint32_t *fb, const char *s,
+                           int x, int y, int size, uint32_t color)
+{
+    while (*s) {
+        const uint8_t *g = pine_demo_glyph_for(*s);
+        for (int col = 0; col < PINE_DEMO_FNT_W; col++) {
+            uint8_t bits = g[col];
+            for (int row = 0; row < PINE_DEMO_FNT_H; row++) {
+                if (!(bits & (1 << row))) continue;
+                for (int dy = 0; dy < size; dy++) {
+                    int py = y + row * size + dy;
+                    if (py < 0 || py >= (int)LCD_H) continue;
+                    uint32_t *line = fb + py * LCD_W;
+                    for (int dx = 0; dx < size; dx++) {
+                        int px = x + col * size + dx;
+                        if (px < 0 || px >= (int)LCD_W) continue;
+                        line[px] = color;
+                    }
+                }
+            }
+        }
+        x += (PINE_DEMO_FNT_W + 1) * size;
+        s++;
+    }
+}
+
+static inline void pine_demo_fill_rect(uint32_t *fb, int x, int y, int w, int h, uint32_t color)
+{
+    for (int py = y; py < y + h && py < (int)LCD_H; py++) {
+        if (py < 0) continue;
+        uint32_t *row = fb + py * LCD_W;
+        for (int px = x; px < x + w && px < (int)LCD_W; px++) {
+            if (px < 0) continue;
+            row[px] = color;
+        }
+    }
+}
+
+static inline void pine_demo_present(uint32_t address)
+{
+    dcache_clean_range(address, LCD_FB_BYTES);
+    video_swap(address);
+}
+static inline void pine_demo_wait(void)
+{
+    /* Require a fresh press, so the key that launched the diagnostic does
+     * not dismiss its result. video_wait_vblank services F12/Escape too. */
+    int released = 0;
+    for (;;) {
+        video_wait_vblank();
+        input_state_t state = input_poll();
+        uint32_t accept = state.buttons & (BTN_A | BTN_B);
+        if (!accept) released = 1;
+        else if (released) return;
+    }
+}
+#endif

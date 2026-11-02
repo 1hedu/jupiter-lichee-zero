@@ -4,7 +4,8 @@
  * These were originally inline-only inside input.c. They're lifted out so
  * cpak.c can reuse them without duplicating the bit-bang code.
  *
- * Pin: PE20, open-drain with external pull-up. See input.c for register map.
+ * Pin: V3s PE20; PINE A64+ PH9 (Pi-2 header pin 13). Open-drain with an
+ * external 3.3 V pull-up. PINE wiring is in boards/pine64/EXTERNAL.md.
  *
  * Bit cell = 4us. A "1" is 1us low + 3us high; a "0" is 3us low + 1us high.
  * The console always pulls low to start a cell; both sides idle high.
@@ -32,8 +33,12 @@ void n64_send_byte(uint8_t b);
 int  n64_recv_byte(uint8_t *out);            /* 0 on success, -1 timeout */
 int  n64_recv_buf(uint8_t *out, int n);      /* same; aborts on first timeout */
 
+extern volatile int n64_dbg_bits_got;
+extern volatile int n64_dbg_first_to_us;
+extern volatile int n64_dbg_recv_buf_bytes;
+
 /* Critical section helpers — joybus is software bit-banged with PMU
- * cycle-counter delays, so any IRQ that fires during a transaction
+ * delays on V3s and the 24 MHz timer on A64. Any IRQ during a transaction
  * (audio mix tick, DMA completion, hstimer) drifts bit timing by tens
  * of microseconds and corrupts the line. Wrap every joybus transaction
  * (send + recv as one unit) in n64_joybus_lock / n64_joybus_unlock so

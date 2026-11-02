@@ -15,6 +15,13 @@
 #include "hstimer.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+#include "../../boards/pine64/demos/support.h"
+#include <stdio.h>
+static volatile uint32_t raster_start, raster_phases[8];
+static uint32_t previous_phases[8], previous_count, raster_frames;
+#endif
 
 /* Sky gradient: 8 bands of color, top to bottom */
 static const uint32_t sky_colors[] = {
@@ -39,6 +46,15 @@ static void sky_band_isr(void)
 {
     if (!frame_active) return;
 
+#ifdef JUPITER_BOARD_PINE64
+    /* Record IRQ positions relative to the real HDMI frame. DE2 double
+     * buffering latches at vblank, so the next framebuffer visualizes
+     * these positions instead of claiming immediate palette changes. */
+    if (raster_band < 8u) {
+        raster_phases[raster_band] = timer_elapsed(raster_start, timer_read());
+        ++raster_band;
+    }
+#else
     raster_band++;
     if (raster_band < NUM_SKY_BANDS) {
         /* Change BLD_BKCOLOR and commit via GLB_DBUFF so the mixer
@@ -46,6 +62,7 @@ static void sky_band_isr(void)
         REG32(0x01100000 + 0x1088) = sky_colors[raster_band];
         REG32(0x01100000 + 0x08) = 1;  /* GLB_DBUFF commit */
     }
+#endif
 }
 
 /* NES tiles */
@@ -146,7 +163,17 @@ int main(void)
     dcache_clean_range(FB1_ADDR, LCD_FB_BYTES);
 
     /* Start sky gradient timer: fires every SCANLINES_PER_BAND scanlines */
+#ifndef JUPITER_BOARD_PINE64
     hstimer_set_repeating(0, SCANLINES_PER_BAND, sky_band_isr);
+#else
+    if (!pine64_hstimer_ready() || !pine64_video_measure_timing()) {
+        uart_puts("[raster] hardware timer or HDMI frame timing unavailable\n");
+        return 0;
+    }
+    uart_puts("[raster] timing actual HDMI lines; gradient visualizes prior-frame IRQ positions\n");
+    uart_puts("[raster] DE2 commits at vblank; sky is rendered into the framebuffer\n");
+    raster_frames = 0;
+#endif
 
     uart_puts("[main] raster effects active!\n");
 
@@ -162,11 +189,22 @@ int main(void)
         /* Wait for vblank — this is when we reset the raster state */
         video_wait_vblank();
 
+#ifdef JUPITER_BOARD_PINE64
+        hstimer_stop(0);
+        previous_count = raster_band < 8u ? raster_band : 8u;
+        for (uint32_t i = 0; i < previous_count; ++i)
+            previous_phases[i] = raster_phases[i];
+        raster_band = 0;
+        frame_active = 1;
+        raster_start = timer_read();
+        hstimer_set_repeating(0, pine64_video_total_lines() / 8u, sky_band_isr);
+#else
         /* Reset raster band counter and set first sky color */
         raster_band = 0;
         frame_active = 1;
         REG32(0x01100000 + 0x1088) = sky_colors[0];  /* BLD_BKCOLOR */
         REG32(0x01100000 + 0x08) = 1;  /* GLB_DBUFF commit */
+#endif
 
         /* Slow cloud scroll */
         scroll_x++;
@@ -177,8 +215,33 @@ int main(void)
         nes_render((uint32_t *)fb, (uint32_t *)ovl, LCD_W, LCD_H,
                    &bg, NULL, NULL, 0, 1);
 
+#ifdef JUPITER_BOARD_PINE64
+        uint32_t backdrop = nes_master_palette[palette_ram[0] & 63u];
+        uint32_t period = pine64_video_frame_ticks();
+        for (uint32_t y = 0; y < LCD_H; ++y) {
+            uint32_t band = previous_count ? 0u : y * 8u / LCD_H;
+            for (uint32_t i = 0; i < previous_count && i < 7u; ++i)
+                if ((uint64_t)y * period >= (uint64_t)previous_phases[i] * LCD_H)
+                    band = i + 1u;
+            for (uint32_t x = 0; x < LCD_W; ++x)
+                if (fb[y * LCD_W + x] == backdrop ||
+                    fb[y * LCD_W + x] == 0xff000000u)
+                    fb[y * LCD_W + x] = sky_colors[band];
+        }
+        char label[64];
+        snprintf(label, sizeof(label), "NATIVE FRAME IRQ: %lu/8", (unsigned long)previous_count);
+        pine_demo_fill_rect((uint32_t *)ovl, 10, 8, 310, 27, 0xc0101020u);
+        pine_demo_draw_text((uint32_t *)ovl, label, 16, 14, 1, 0xffffffffu);
+        pine_demo_draw_text((uint32_t *)ovl, "TIMED SKY + NES CLOUDS / GROUND", 16, 24, 1, 0xffc0e0ffu);
+        if (++raster_frames % 120u == 0) {
+            uart_puts("[raster] observed IRQ samples/frame="); uart_putdec(previous_count);
+            uart_puts(" native lines="); uart_putdec(pine64_video_total_lines());
+            uart_puts(" frame us="); uart_putdec(ticks_to_us(period)); uart_puts("\n");
+        }
+#else
         /* After render, mark frame done so ISR stops changing colors */
         frame_active = 0;
+#endif
 
         dcache_clean_range(fb_addr, LCD_FB_BYTES);
         dcache_clean_range(ovl_addr, LCD_FB_BYTES);

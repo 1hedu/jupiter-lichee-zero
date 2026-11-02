@@ -7,6 +7,9 @@
  */
 #include "jupiter.h"
 #include "hstimer.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+#endif
 #include "../../libvgm/vgm_player.h"
 #include "the_moon.h"
 
@@ -400,7 +403,11 @@ void main(void)
      * cadence-driven, not main-loop-driven. */
     hstimer_init();
     audio_isr_armed = 1;
+#ifdef JUPITER_BOARD_PINE64
+    pine64_hstimer_set_us((AUDIO_TICK_SCANLINES * 175u + 2u) / 3u, 0, vgm_audio_tick);
+#else
     hstimer_set_repeating(0, AUDIO_TICK_SCANLINES, vgm_audio_tick);
+#endif
     irq_global_enable();
 
     uart_puts("Entering orbit...\n\n");

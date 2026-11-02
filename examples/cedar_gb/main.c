@@ -23,6 +23,9 @@
 #include "sheet.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/cedar_status.h"
+#endif
 
 #include "celebi_chr.h"
 #include "celebi_thumb.h"
@@ -379,6 +382,9 @@ int main(void)
         memset((void*)ovl, 0, LCD_FB_BYTES);
         gb_render((uint32_t*)fb, (uint32_t*)ovl, LCD_W, LCD_H,
                   &bg, frame_chr, spr_palette, oam, num_oam, 1);
+#ifdef JUPITER_BOARD_PINE64
+        pine64_cedar_draw_status((uint32_t *)ovl, cedar_ok);
+#endif
 
         dcache_clean_range(fb_addr, LCD_FB_BYTES);
         dcache_clean_range(ovl_addr, LCD_FB_BYTES);

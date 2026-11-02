@@ -69,7 +69,10 @@ typedef struct {
     uint8_t  six_btn;    /* Genesis: 1 if 6-button controller detected */
 } input_state_t;
 
-/* Initialize GPIO for the specified controller type.
+/* Initialize input for the specified controller type.
+ * PINE64 uses USB/serial logical pads, plus optional physical N64 on PH9;
+ * it does not repurpose the microSD pins for NES/SNES/Genesis wiring.
+ * The following GPIO assignment describes the original V3s backend.
  * Call once at startup. Configures pin direction and pull-ups.
  * Can be called multiple times for different types
  * (NES/SNES use PF0-PF2, Genesis uses PF0-PF5 + PE1, N64 uses PE20).

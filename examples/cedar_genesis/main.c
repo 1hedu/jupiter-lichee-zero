@@ -12,6 +12,9 @@
 #include "genesis.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/cedar_status.h"
+#endif
 #include "../../tools/h264_template_512x480.h"
 
 /* Raw ARGB sprite sheet embedded via objcopy */
@@ -294,6 +297,9 @@ int main(void)
     uart_puts("[main] converted in "); uart_putdec((t1-t0)/1200); uart_puts("us\n");
 
     /* ---- Step 3: H.264 ENCODE on CedarVE (AVC engine +0xB00) ---- */
+#ifdef JUPITER_BOARD_PINE64
+    int cedar_ok = 0;
+#endif
     int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10);
     if (enc_sz < 0) {
         uart_puts("[main] ENCODE FAILED — falling back to raw ARGB\n");
@@ -313,6 +319,9 @@ int main(void)
         if (rc == 0) {
             /* decode invalidates its output buffers internally */
             cedar_nv12_to_argb(sheet, SHEET_W, SHEET_W, SHEET_H);
+#ifdef JUPITER_BOARD_PINE64
+            cedar_ok = 1;
+#endif
             uart_puts("[main] ROUND-TRIP COMPLETE!\n");
         } else {
             uart_puts("[main] decode fail\n");
@@ -618,6 +627,9 @@ int main(void)
         genesis_render((uint32_t *)fb, (uint32_t *)ovl, LCD_W, LCD_H,
                        bg_color, &plane_a, &plane_b, NULL,
                        sprites, num_spr, 1);
+#ifdef JUPITER_BOARD_PINE64
+        pine64_cedar_draw_status((uint32_t *)ovl, cedar_ok);
+#endif
 
         dcache_clean_range(fb_addr, LCD_FB_BYTES);
         dcache_clean_range(ovl_addr, LCD_FB_BYTES);

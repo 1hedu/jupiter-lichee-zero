@@ -21,7 +21,11 @@
 #include "jupiter.h"
 #include "pmu.h"
 #include "../../libvgm/vgm_player.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "fighting_back.h"
+#endif
 
 /* ================================================================
  *  Audio: pre-rendered DRAM buffer + streaming playback
@@ -494,7 +498,13 @@ static void hud_track_info(volatile uint32_t *ovl, uint32_t frame)
     int bx = 6, by = 6;
     hud_box(ovl, bx, by, bw, bh);
 
-    draw_text((uint32_t *)ovl, "FIGHTING BACK", bx + 4, by + 3, 1, 0xFFE0C040);
+    draw_text((uint32_t *)ovl,
+#ifdef JUPITER_BOARD_PINE64
+    PINE64_MUSIC_TITLE
+#else
+    "FIGHTING BACK"
+#endif
+, bx + 4, by + 3, 1, 0xFFE0C040);
     draw_text((uint32_t *)ovl, "THUNDER FORCE 4", bx + 4, by + 12, 1, 0xFFA0C8E0);
 
     /* Timestamp */
@@ -542,7 +552,13 @@ static void draw_prerender_splash(uint32_t *fb, int progress_pct)
     }
     /* Track */
     {
-        const char *line = "FIGHTING BACK - THUNDER FORCE 4";
+        const char *line =
+#ifdef JUPITER_BOARD_PINE64
+    PINE64_MUSIC_TITLE
+#else
+    "FIGHTING BACK - THUNDER FORCE 4"
+#endif
+;
         int char_w = (FNT_W + 1) * 2;
         int w = 31 * char_w - 2;
         int x = ((int)LCD_W - w) / 2;

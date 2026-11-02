@@ -1,5 +1,12 @@
 # MT-32 Audio Status
 
+> The bench measurements and V3s codec register settings below describe the
+> original Lichee target. The PINE A64+ port retains the common Munt math,
+> native 48 kHz and partial-mixing fixes, with its own AIF1/DAC DMA driver,
+> a 32 MiB heap and RTTI-enabled build. PINE audio quality and real-time
+> throughput still need listening and measurement on that board; the V3s
+> results are not PINE hardware validation. See `boards/pine64/AUDIO_CEDAR.md`.
+
 ## What Works
 - MT-32 LA synthesis via Munt (real-time and pre-rendered)
 - MIDI SMF playback with multi-track merge

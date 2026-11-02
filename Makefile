@@ -7,6 +7,11 @@
 #   make boot                         Build + generate boot.scr
 #   make sdcard MNT=/mnt              Copy to mounted SD card
 
+BOARD ?= lichee_zero
+ifeq ($(BOARD),pine64)
+include boards/pine64/board.mk
+else
+
 CROSS   = arm-none-eabi-
 CC      = $(CROSS)gcc
 CXX     = $(CROSS)g++
@@ -588,3 +593,5 @@ clean:
 
 size: $(TARGET).elf
 	$(SIZE) $<
+
+endif # BOARD

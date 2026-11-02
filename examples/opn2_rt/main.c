@@ -10,7 +10,11 @@
 #include "jupiter.h"
 #include "pmu.h"
 #include "../../libvgm/vgm_player.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "fighting_back.h"
+#endif
 
 /* ---- Audio plumbing ---- */
 #define MIX_BUF_SIZE 4096
@@ -55,11 +59,15 @@ void main(void)
 
     /* Report CPU clock */
     {
+#ifdef JUPITER_BOARD_PINE64
+        uart_puts("[cpu] "); uart_putdec(PMU_CPU_MHZ); uart_puts(" MHz measured\n");
+#else
         uint32_t pll = *(volatile uint32_t *)0x01C20000;
         uint32_t n = ((pll >> 8) & 0x1F) + 1;
         uint32_t k = ((pll >> 4) & 0x3) + 1;
         uint32_t m = (pll & 0x3) + 1;
         uart_puts("[cpu] "); uart_putdec(24 * n * k / m); uart_puts(" MHz\n");
+#endif
     }
 
     audio_init();
@@ -87,6 +95,10 @@ void main(void)
     uint32_t pmu_max = 0;
     uint32_t last_underruns = 0;
 
+#ifdef JUPITER_BOARD_PINE64
+    extern void pine64_status(const char *, const char *);
+    pine64_status("OPN2 REAL-TIME SYNTH", "Cycle-accurate FM synthesis and VGM playback.\nOutput: onboard 3.5 mm stereo jack.\nPerformance statistics are printed over serial.\nEscape or F12 reboots to the menu.");
+#endif
     while (1) {
         uint32_t t0 = timer_read();
 
@@ -120,11 +132,15 @@ void main(void)
             uint32_t underruns = audio_underruns - last_underruns;
             last_underruns = audio_underruns;
 
+#ifdef JUPITER_BOARD_PINE64
+            uint32_t budget = (PMU_CPU_MHZ * 1000000u) / vgm.sample_rate;
+#else
             uint32_t pll = *(volatile uint32_t *)0x01C20000;
             uint32_t n = ((pll >> 8) & 0x1F) + 1;
             uint32_t k = ((pll >> 4) & 0x3) + 1;
             uint32_t m = (pll & 0x3) + 1;
             uint32_t budget = (24000000 * n * k / m) / vgm.sample_rate;
+#endif
 
             uint32_t avg = (uint32_t)(pmu_total / (pmu_frames * spf));
 

@@ -17,7 +17,11 @@
  */
 #include <stddef.h>
 #include "jupiter.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "fighting_back.h"
+#endif
 
 /* ================================================================
  *  VGM parser — sends register writes to real hardware

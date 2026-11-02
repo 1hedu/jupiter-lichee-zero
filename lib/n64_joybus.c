@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../boards/pine64/n64_joybus.inc"
+#else
 /*
  * Jupiter SDK — N64 joybus low-level primitives.
  *
@@ -148,7 +151,6 @@ int n64_recv_byte(uint8_t *out)
     *out = b;
     return 0;
 }
-
 /* Diagnostic: how many bytes were captured before the most recent
  * timeout in recv_buf. Reset on every recv_buf call. */
 volatile int n64_dbg_recv_buf_bytes = 0;
@@ -162,3 +164,4 @@ int n64_recv_buf(uint8_t *out, int n)
     }
     return 0;
 }
+#endif /* JUPITER_BOARD_PINE64 */

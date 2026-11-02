@@ -17,10 +17,17 @@
  * Build: make GAME=examples/opn2_hw_nes/main.c
  */
 #include "jupiter.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/demos/ym3438_setup.h"
+#endif
 #include "input.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "../opn2_hw_live/sortie.h"
+#endif
 
 /* NES APU emulator (NSFPlay, from libvgm) */
 extern void *NES_APU_np_Create(uint32_t clock, uint32_t rate);
@@ -346,6 +353,10 @@ int main(void)
     timer_init();
     mmu_init();
     pmu_init();
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_ym3438_demo_setup(YM_CLK_SI5351))
+        return 0;
+#endif
 
     uart_puts("\n========================================\n");
     uart_puts("  YM3438 Live — Real FM + NES APU PSG\n");
@@ -394,17 +405,28 @@ int main(void)
      * icache pressure can't cause dropouts). */
     hstimer_init();
     audio_isr_armed = 1;
+#ifdef JUPITER_BOARD_PINE64
+    /* Preserve this producer cadence in time, independent of HDMI mode. */
+    pine64_hstimer_set_us((AUDIO_TICK_SCANLINES * 175u + 2u) / 3u, 0, nes_audio_tick);
+#else
     hstimer_set_repeating(0, AUDIO_TICK_SCANLINES, nes_audio_tick);
+#endif
 
     irq_global_enable();
 
     /* ---- YM3438 hardware init ---- */
+#ifndef JUPITER_BOARD_PINE64
     ym3438_hw_set_clock(YM_CLK_CCU_MCLK);
     ym3438_hw_init();
+#endif
 
     /* ---- VGM ---- */
     vgm_hw_init(vgm_sortie, vgm_sortie_len);
+    #ifdef JUPITER_BOARD_PINE64
+    uart_puts("[vgm] Original Jupiter FM+PSG exercise loaded\n");
+#else
     uart_puts("[vgm] Comix Zone - Sortie loaded\n");
+#endif
 
     /* ---- N64 controller ---- */
     input_init(INPUT_N64);

@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../boards/pine64/ym3438_hw.inc"
+#else
 /*
  * Jupiter SDK — YM3438 hardware driver
  *
@@ -296,14 +299,14 @@ static void ym3438_scaled_write(uint8_t port, uint8_t addr, uint8_t data)
             ndelay(600);
             ym3438_hw_write_port1(addr, new_lo);
         }
-    } else if (scale_8mhz && addr >= 0xAC && addr <= 0xAE) {
+    } else if (scale_8mhz && port == 0 && addr >= 0xAC && addr <= 0xAE) {
         /* CH3 special mode high byte — cache, write as-is (mirrors $A4-$A6) */
         fnum_hi_cache_ch3[addr & 3] = data;
         if (port == 0)
             ym3438_hw_write(addr, data);
         else
             ym3438_hw_write_port1(addr, data);
-    } else if (scale_8mhz && addr >= 0xA8 && addr <= 0xAA) {
+    } else if (scale_8mhz && port == 0 && addr >= 0xA8 && addr <= 0xAA) {
         /* CH3 special mode low byte — combine, scale, write both
          * (pairing $AC↔$A8, $AD↔$A9, $AE↔$AA) */
         uint8_t hi = fnum_hi_cache_ch3[addr & 3];
@@ -342,3 +345,4 @@ void ym3438_hw_vgm_write(uint8_t port, uint8_t addr, uint8_t data)
     ym3438_scaled_write(port, addr, data);
     ym3438_hw_busy_wait();
 }
+#endif /* JUPITER_BOARD_PINE64 */

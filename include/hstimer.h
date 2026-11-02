@@ -1,11 +1,12 @@
 /*
  * Jupiter SDK — High-Speed Timer (HSTimer)
  *
- * Two independent 56-bit down-counters clocked from AHB (~200MHz, 5ns/tick).
- * Used for scanline-accurate mid-frame interrupts (raster effects).
+ * V3s has two independent 56-bit AHB down-counters. A64 has one, timer0;
+ * its AHB rate is calibrated against the 24 MHz timer by the board driver.
+ * Used for timed mid-frame interrupts (raster effects).
  *
  * Base: 0x01C60000
- * IRQ: timer0 = GIC SPI 51 (IRQ 83), timer1 = GIC SPI 52 (IRQ 84)
+ * IRQ: timer0 = GIC SPI 51 (IRQ 83), V3s timer1 = SPI 52 (IRQ 84)
  * Clock gate: BUS_CLK_GATING0 bit 19, reset: BUS_SOFT_RST0 bit 19
  */
 #ifndef HSTIMER_H
@@ -13,18 +14,22 @@
 
 #include <stdint.h>
 
-/* Ticks per scanline at our panel timing:
+#ifndef JUPITER_BOARD_PINE64
+/* V3s ticks per scanline at the original panel timing:
  * Panel: 525 pixels/line @ 9MHz pixel clock = 58.33μs/line
  * AHB @ 200MHz = 5ns/tick → 11,666 ticks/scanline
  * Adjust if AHB clock differs. */
 #define HSTIMER_TICKS_PER_SCANLINE  11666
+#endif
 
 /* Initialize HSTimer hardware (clock gate + reset) */
 void hstimer_init(void);
 
 /* Set a one-shot interrupt to fire after `scanlines` lines from NOW.
  * Calls `callback` in IRQ context when it fires.
- * Timer 0 or 1 (0 or 1). */
+ * V3s: timer 0 or 1, original LCD lines. A64: timer 0 only, actual native
+ * progressive HDMI lines measured by the display driver. For audio cadence
+ * independent of display mode use pine64_hstimer_set_us() on A64. */
 void hstimer_set_scanline(int timer, uint32_t scanlines, void (*callback)(void));
 
 /* Set a repeating interrupt every `scanlines` lines.

@@ -15,6 +15,9 @@
 #include "pmu.h"
 #include "sdmmc.h"
 #include "hstimer.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+#endif
 #include <string.h>
 #include <stddef.h>
 
@@ -201,7 +204,11 @@ void main(void)
      * for UART prints, SD reads, etc. — a critical isolation since
      * audio underruns are the most audible glitch. */
     hstimer_init();
+#ifdef JUPITER_BOARD_PINE64
+    pine64_hstimer_set_us((32u * 175u + 2u) / 3u, 0, audio_mix_tick);
+#else
     hstimer_set_repeating(0, 32, audio_mix_tick);
+#endif
 
     D("step 5: allocate track buffer");
     uint32_t pcm_bytes = t->length_bytes;

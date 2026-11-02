@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../boards/pine64/si5351.inc"
+#else
 /*
  * Jupiter SDK — Si5351 programmable clock generator driver
  *
@@ -244,3 +247,4 @@ ready:
     /* Disable TWI0 clock gate (save power, we're done with I2C) */
     CCU_BUS_CLK_GATE3 &= ~TWI0_GATE_BIT;
 }
+#endif /* JUPITER_BOARD_PINE64 */

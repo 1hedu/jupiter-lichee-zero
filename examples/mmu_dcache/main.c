@@ -92,7 +92,11 @@ void main(void)
     uart_puts("Display live.\n\n");
 
     /* ---- BENCHMARK: before D-cache ---- */
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("--- CACHED FIRST RENDER (MMU already active in menu) ---\n");
+#else
     uart_puts("--- BASELINE (I-cache only) ---\n");
+#endif
     volatile uint32_t *fb0 = (volatile uint32_t *)FB0_ADDR;
 
     uint32_t t0 = timer_read();
@@ -106,7 +110,11 @@ void main(void)
     video_swap(FB0_ADDR);
 
     /* ---- ENABLE MMU + D-CACHE (everything cached) ---- */
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("\nVerifying idempotent MMU setup; DDR remains cached...\n");
+#else
     uart_puts("\nEnabling MMU + D-cache (all DRAM cached)...\n");
+#endif
     mmu_init();
     uart_puts("MMU active.\n\n");
 
@@ -136,6 +144,9 @@ void main(void)
     uart_putdec(us_total);
     uart_puts(" us\n\n");
 
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("Both renders used the cached A64 mapping.\nThe second includes explicit DE2 cache maintenance.\n\n");
+#else
     /* ---- RESULT ---- */
     uart_puts("  ");
     uart_putdec(us_baseline);
@@ -145,6 +156,8 @@ void main(void)
     if (us_total > 0) uart_putdec(us_baseline / us_total);
     else uart_puts("?");
     uart_puts("x speedup)\n\n");
+
+#endif
 
     video_swap(FB1_ADDR);
 

@@ -1,0 +1,37 @@
+JUPITER PINE A64+ 2 GB / MERCURY BRING-UP — SOURCE PROVENANCE
+Build date: 2026-10-17. No GitHub branch, commit or PR was published.
+Application upstream: https://github.com/1hedu/jupiter-lichee-zero
+Base commit: 4794e1f65748080164cf2e13ec4b348a9099088e
+The included Jupiter snapshot contains all local board/menu/Mercury changes,
+all source inputs and the modified required third-party components.
+
+Pinned application dependencies:
+Munt: https://github.com/munt/munt
+  6f2835bd8d61facb0cf92224e6b266fd02cd882b, mt32emu 2.8.0
+Nuked SC-55: https://github.com/nukeykt/Nuked-SC55
+  dd2f525f15fe4580a8fbc59535170651ca559f59, with PINE64 callback adapter
+TinyUSB: https://github.com/hathach/tinyusb
+  86ad6e56c1700e85f1c5678607a762cfe3aa2f47, 0.18.0, with OHCI adaptations
+Original licenses and source-file notices are retained in each component.
+The SC-55 component's license includes noncommercial-use restrictions;
+its complete modified source is included with the entire application source.
+No MT-32/SC-55 proprietary firmware ROMs are included.
+
+Build: Arm GNU GCC/G++ 13.2.1, Newlib 4.4.0, hard-float Cortex-A53/NEON.
+Reproducible timestamp inherited from the existing firmware environment:
+SOURCE_DATE_EPOCH=1759778025 (2025-10-06). This old embedded timestamp is
+expected; the Mercury protocol build ID is 0x20261017.
+PINE64 build: make BOARD=pine64 -j6 boot
+Mercury's separate source archive includes its Pico SDK, TinyUSB, PicoDVI and
+picotool snapshots, exact lock file and offline build instructions.
+
+The working SD2 bootloader and DTB are reused on the user's card. They are
+not part of this boot-partition update bundle. Reference firmware SHA256:
+bc8597e9cf24785b2323804ead3e48c268795a499f65e8e2364f338eb65f0dac
+Reference Pine64+ DTB SHA256:
+6a28a7ca60f8ea4ad658e1a21cb54c0114f0183eb1abc498cb4299e278923c06
+U-Boot base: e50b1e8715011def8aff1588081a2649a2c6cd47, v2025.10-jupiter-sd2
+TF-A base: 4ec2948fe3f65dba2f19e691e702f7de2949179c, v2.12.0
+
+Validation separates physical SD2 observations from software/model/QEMU tests.
+See the verification directory and the board/Mercury documentation.

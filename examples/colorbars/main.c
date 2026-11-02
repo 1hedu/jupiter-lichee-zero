@@ -30,5 +30,9 @@ void main(void)
 
     video_init();
     uart_puts("Color bars displayed. Halted.\n");
-    while (1);
+    while (1) {
+#ifdef JUPITER_BOARD_PINE64
+        video_wait_vblank();
+#endif
+    }
 }

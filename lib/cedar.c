@@ -13,6 +13,22 @@
 #define VE(off)  REG32(VE_BASE + (off))
 #define VEB(off) (*(volatile uint8_t *)(VE_BASE + (off)))
 
+#ifdef JUPITER_BOARD_PINE64
+/* A64 native HDMI buffers do not have V3s's unused half-slot layout.
+ * Keep the dedicated 0x43000000..0x43800000 Cedar arena; PINE main BSS
+ * lives above 0x50000000. The 448x928 atlas fits the shared 512 KiB
+ * luma / 256 KiB chroma limits without touching display or stacks. */
+#define BUF_INPUT       0x43000000u
+#define BUF_INPUT_SIZE  0x00100000u
+#define BUF_LUMA        0x43100000u
+#define BUF_CHROMA      0x43200000u
+#define BUF_PIC_INFO    0x43300000u
+#define BUF_NEIGHBOR    0x43340000u
+#define BUF_MV_COL      0x43348000u
+#define BUF_MV_CAP      0x00040000u
+#define BUF_LUMA_SIZE   0x00080000u
+#define BUF_CHROMA_SIZE 0x00040000u
+#else
 /* Buffer layout: the VE's DMA buffers live in the unused top halves of
  * the five 1 MB VRAM display slots (each display buffer occupies only
  * 510 KB of its slot — see FB0_ADDR..OVL1_ADDR in v3s.h). This keeps
@@ -50,12 +66,66 @@
 #define BUF_INPUT_SIZE   0x40000
 #define BUF_LUMA_SIZE    0x80000
 #define BUF_CHROMA_SIZE  0x40000
+#endif
 
 /* VLD address encoding */
 #define VLD_ADDR_VAL(x)  (((x)&0x0FFFFFF0)|((x)>>28))
 #define VLD_FLAGS        ((1u<<30)|(1u<<29)|(1u<<28))
 
 /* ================================================================== */
+#ifdef JUPITER_BOARD_PINE64
+static int pine64_ve_ready;
+
+int pine64_cedar_ready(void) { return pine64_ve_ready; }
+
+void pine64_cedar_recover(void)
+{
+    /* A64 VE is BUS_RESET1 +0x2c4 bit0; the V3s +0x2c0 location
+     * belongs to a different reset bank. Do not reset DE2 or DMA. */
+    REG32(CCU_BASE + 0x02c4) &= ~1u;
+    __asm__ volatile("dsb sy" ::: "memory");
+    for (volatile unsigned i = 0; i < 128u; ++i) { }
+    REG32(CCU_BASE + 0x02c4) |= 1u;
+    __asm__ volatile("dsb sy" ::: "memory");
+    VE(0x000) = 0x00130007u;
+}
+
+void cedar_init(void)
+{
+    pine64_ve_ready = 0;
+    /* SRAM C1 (0x01d00000) belongs to VE when SYS_CTRL[30:0]=1.
+     * A64 SRAM C at 0x00018000 instead belongs to DE2 and is selected
+     * by SYS_CTRL+4 bit24. Leave that separate display bit untouched. */
+    REG32(0x01c00000u) |= 0x7fffffffu;
+    __asm__ volatile("dsb sy" ::: "memory");
+
+    /* Exact 402 MHz, matching Linux's sun50i_a64_cedrus_variant:
+     * PLL_VE = 24 MHz * 67 / 4. Integer mode is bit24=1. */
+    REG32(CCU_BASE + 0x0018) = (1u << 31) | (1u << 24) | (66u << 8) | 3u;
+    uint32_t start = timer_read();
+    unsigned polls;
+    for (polls = 0; polls < 2000000u; ++polls) {
+        if (REG32(CCU_BASE + 0x0018) & (1u << 28)) break;
+        if (ticks_to_us(timer_elapsed(start, timer_read())) >= 100000u) break;
+    }
+    if (!(REG32(CCU_BASE + 0x0018) & (1u << 28))) {
+        uart_puts("[cedar/pine64] PLL_VE lock timeout\n");
+        return;
+    }
+    REG32(CCU_BASE + 0x0064) |= 1u;       /* BUS_GATE1: VE */
+    REG32(CCU_BASE + 0x013c) = 1u << 31; /* module /1 */
+    REG32(CCU_BASE + 0x0100) |= 1u;      /* DRAM access */
+    pine64_cedar_recover();
+    uint32_t version = VE(0x0f0);
+    if (!version || version == 0xffffffffu) {
+        uart_puts("[cedar/pine64] no VE register response\n");
+        return;
+    }
+    pine64_ve_ready = 1;
+    uart_puts("[cedar/pine64] VE version "); uart_puthex(version);
+    uart_puts(" at 402 MHz, SRAM C1; DE2 SRAM preserved\n");
+}
+#else
 void cedar_init(void)
 {
     /* SRAM mapping — THE critical step from Allwinner BSP */
@@ -101,10 +171,13 @@ void cedar_init(void)
     uart_puthex(REG32(CCU_BASE + 0x0018));
     uart_puts("\n");
 }
+#endif
 
 /* ================================================================== */
 /* Cache invalidation for VE output buffers                            */
 /* ================================================================== */
+#ifndef JUPITER_BOARD_PINE64
+/* The A64 board provides its cache-line-aware implementation in mmu.c. */
 void dcache_invalidate_range(uint32_t addr, uint32_t size)
 {
     uint32_t ctr;
@@ -116,6 +189,7 @@ void dcache_invalidate_range(uint32_t addr, uint32_t size)
         __asm__ volatile("mcr p15, 0, %0, c7, c6, 1" :: "r"(addr));
     __asm__ volatile("dsb");
 }
+#endif
 
 /* ================================================================== */
 /* SRAM + VLD helpers                                                   */
@@ -176,6 +250,17 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
                       int pic_init_qp, int slice_qp_delta,
                       int chroma_qp_off, int disable_deblock)
 {
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_ve_ready) return -4;
+    if (!h264 || h264_sz < 4 || h264_sz > BUF_INPUT_SIZE ||
+        !w || !h || w > 512 || h > 1024 || (w & 1u) || (h & 1u) ||
+        pic_init_qp + slice_qp_delta < 0 || pic_init_qp + slice_qp_delta > 51 ||
+        chroma_qp_off < -12 || chroma_qp_off > 12 ||
+        disable_deblock < 0 || disable_deblock > 2) {
+        uart_puts("[cedar/pine64] unsupported frame or buffer dimensions\n");
+        return -5;
+    }
+#endif
     uint32_t mb_w = (w + 15) / 16;
     uint32_t mb_h = (h + 15) / 16;
     uint32_t stride = mb_w * 16;
@@ -191,6 +276,10 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     uint32_t nal_len = 0;
     const uint8_t *nal = find_nal(h264, h264_sz, 5, &nal_len);
     if (!nal) { uart_puts("[cedar] no IDR\n"); return -1; }
+#ifdef JUPITER_BOARD_PINE64
+    if (nal_len > BUF_INPUT_SIZE - 4095u || hdr_bits > nal_len * 8u || hdr_bits < 8u)
+        return -5;
+#endif
 
     /* Copy NAL to aligned buffer */
     uint32_t padded = (nal_len + 4095) & ~4095;
@@ -198,17 +287,30 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
         uart_puts("[cedar] NAL too large for input buffer\n");
         return -1;
     }
+#ifdef JUPITER_BOARD_PINE64
+    memmove((void *)BUF_INPUT, nal, nal_len);
+    memset((void *)(BUF_INPUT + nal_len), 0, padded - nal_len);
+#else
     memset((void *)BUF_INPUT, 0, padded);
     memcpy((void *)BUF_INPUT, nal, nal_len);
+#endif
     dcache_clean_range(BUF_INPUT, padded);
 
     /* Clear working buffers */
     memset((void *)BUF_PIC_INFO, 0, 0x40000);
     memset((void *)BUF_NEIGHBOR, 0, 0x8000);
+#ifdef JUPITER_BOARD_PINE64
+    memset((void *)BUF_MV_COL, 0, BUF_MV_CAP);
+#else
     memset((void *)BUF_MV_COL, 0, 0x10000);
+#endif
     dcache_clean_range(BUF_PIC_INFO, 0x40000);
     dcache_clean_range(BUF_NEIGHBOR, 0x8000);
+#ifdef JUPITER_BOARD_PINE64
+    dcache_clean_range(BUF_MV_COL, BUF_MV_CAP);
+#else
     dcache_clean_range(BUF_MV_COL, 0x10000);
+#endif
 
     /* Clear output */
     uint32_t luma_sz = stride * mb_h * 16;
@@ -238,7 +340,11 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     frame[3] = BUF_LUMA;
     frame[4] = BUF_CHROMA;
     frame[5] = BUF_MV_COL;
+#ifdef JUPITER_BOARD_PINE64
+    frame[6] = BUF_MV_COL + mb_w * mb_h * 32u;
+#else
     frame[6] = BUF_MV_COL;
+#endif
     sram_write(0x100, frame, sizeof(frame));
     VE(0x24C) = 0;
 
@@ -251,7 +357,12 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     VE(0x224) = 7;  /* INIT_SWDEC */
     if (wait_vld() < 0 || skip_bits(hdr_bits) < 0) {
         uart_puts("[cedar] VLD flush fail\n");
-        VE(0x000) = 0x00130007; return -2;
+#ifdef JUPITER_BOARD_PINE64
+        pine64_cedar_recover();
+#else
+        VE(0x000) = 0x00130007;
+#endif
+        return -2;
     }
 
     /* SPS: chroma=1, frame_mbs_only=1
@@ -285,8 +396,18 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
 
     /* Poll */
     uint32_t status, timeout = 50000000;
+#ifdef JUPITER_BOARD_PINE64
+    uint32_t decode_start = timer_read();
+    do {
+        status = VE(0x228);
+        if (status & 7u) break;
+        if (ticks_to_us(timer_elapsed(decode_start, timer_read())) >= 500000u) break;
+    } while (--timeout);
+    VE(0x220) = 0; /* no IRQs left asserted when the menu returns */
+#else
     do { status = VE(0x228); }
     while (!(status & 7) && --timeout);
+#endif
 
     VE(0x228) = 7;
     VE(0x000) = 0x00130007;
@@ -295,7 +416,11 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     dcache_invalidate_range(BUF_LUMA, luma_sz);
     dcache_invalidate_range(BUF_CHROMA, chroma_sz);
 
+#ifdef JUPITER_BOARD_PINE64
+    if ((status & 7u) == 1u) {
+#else
     if (status & 1) {
+#endif
         /* Print success only once per ~64 frames so video playback at
          * 15-30 fps doesn't drown the UART. */
         static uint32_t ok_count = 0;
@@ -311,6 +436,9 @@ int cedar_h264_decode(const uint8_t *h264, uint32_t h264_sz,
     uart_puts("[cedar] FAIL status=");
     uart_puthex(status);
     uart_puts("\n");
+#ifdef JUPITER_BOARD_PINE64
+    pine64_cedar_recover();
+#endif
     return -3;
 }
 
@@ -325,6 +453,10 @@ uint32_t cedar_dec_chroma_addr(void) { return BUF_CHROMA; }
 void cedar_nv12_to_argb(uint32_t *dst, uint32_t dst_pitch,
                         uint32_t w, uint32_t h)
 {
+#ifdef JUPITER_BOARD_PINE64
+    if (!dst || dst_pitch < w || !w || !h || w > 512 || h > 1024 ||
+        (w & 1u) || (h & 1u)) return;
+#endif
     uint32_t stride = (w + 15) & ~15;
     const uint8_t *Y = (const uint8_t *)BUF_LUMA;
     const uint8_t *UV = (const uint8_t *)BUF_CHROMA;
@@ -334,9 +466,18 @@ void cedar_nv12_to_argb(uint32_t *dst, uint32_t dst_pitch,
             int y = Y[r * stride + c];
             int u = UV[(r/2) * stride + (c & ~1)];
             int v = UV[(r/2) * stride + (c | 1)];
+#ifdef JUPITER_BOARD_PINE64
+            /* Inverse of the encoder's BT.601 limited-range conversion. */
+            int luma = y - 16;
+            if (luma < 0) luma = 0;
+            int R = (298 * luma + 409 * (v-128) + 128) >> 8;
+            int G = (298 * luma - 100 * (u-128) - 208 * (v-128) + 128) >> 8;
+            int B = (298 * luma + 516 * (u-128) + 128) >> 8;
+#else
             int R = y + ((359 * (v-128)) >> 8);
             int G = y - ((88 * (u-128) + 183 * (v-128)) >> 8);
             int B = y + ((454 * (u-128)) >> 8);
+#endif
             if (R<0) R=0; if (R>255) R=255;
             if (G<0) G=0; if (G>255) G=255;
             if (B<0) B=0; if (B>255) B=255;

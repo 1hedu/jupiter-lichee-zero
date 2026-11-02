@@ -6,9 +6,9 @@
  * the ABI guard symbols GCC needs, and exposes a tiny init_array walker
  * so static constructors get called exactly once at startup.
  *
- * Compiled with -fno-exceptions -fno-rtti -fno-threadsafe-statics, so
- * most of the usual C++ ABI surface (unwind, typeinfo, guard vars) is
- * already elided.
+ * Compiled with -fno-exceptions and -fno-threadsafe-statics. The original
+ * V3s build also disables RTTI; PINE retains it for Munt's dynamic_cast
+ * and links the corresponding standard C++ runtime support.
  */
 
 #include <stddef.h>
@@ -46,6 +46,11 @@ void operator delete[](void *p, size_t) noexcept { free(p); }
 
 extern "C" {
 
+#ifdef JUPITER_BOARD_PINE64
+/* No hosted process termination: menu exits reboot through PSCI. */
+void _fini(void) {}
+#endif
+
 /* Called if a pure virtual method slips through dispatch. Hard halt. */
 void __cxa_pure_virtual(void)
 {
@@ -66,6 +71,11 @@ extern init_fn_t __init_array_end[];
 
 void cpp_init(void)
 {
+#ifdef JUPITER_BOARD_PINE64
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+#endif
     for (init_fn_t *f = __init_array_start; f < __init_array_end; f++)
         (*f)();
 }

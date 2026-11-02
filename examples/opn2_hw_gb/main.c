@@ -16,10 +16,17 @@
  * Build: make GAME=examples/opn2_hw_gb/main.c
  */
 #include "jupiter.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/demos/ym3438_setup.h"
+#endif
 #include "input.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "../opn2_hw_live/sortie.h"
+#endif
 
 /* GB DMG sound emulator (MAME, from libvgm) */
 extern void *gb_jupiter_init(uint32_t clock, uint32_t sample_rate);
@@ -350,6 +357,10 @@ int main(void)
     timer_init();
     mmu_init();
     pmu_init();
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_ym3438_demo_setup(YM_CLK_SI5351))
+        return 0;
+#endif
 
     uart_puts("\n========================================\n");
     uart_puts("  YM3438 Live — Real FM + GB DMG PSG\n");
@@ -402,12 +413,18 @@ int main(void)
     irq_global_enable();
 
     /* ---- YM3438 hardware init ---- */
+#ifndef JUPITER_BOARD_PINE64
     ym3438_hw_set_clock(YM_CLK_CCU_MCLK);
     ym3438_hw_init();
+#endif
 
     /* ---- VGM ---- */
     vgm_hw_init(vgm_sortie, vgm_sortie_len);
+    #ifdef JUPITER_BOARD_PINE64
+    uart_puts("[vgm] Original Jupiter FM+PSG exercise loaded\n");
+#else
     uart_puts("[vgm] Comix Zone - Sortie loaded\n");
+#endif
 
     /* ---- N64 controller ---- */
     input_init(INPUT_N64);

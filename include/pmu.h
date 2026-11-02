@@ -1,12 +1,35 @@
 /*
  * Jupiter SDK — ARM PMU cycle counter
- * Direct PMCCNTR access for bare-metal Cortex-A7 profiling.
+ * Direct PMCCNTR access for bare-metal ARM profiling. PINE A64 delay
+ * helpers use the 24 MHz crystal timer; CPU speed is never assumed.
  */
 #ifndef PMU_H
 #define PMU_H
 
 #include <stdint.h>
 
+#ifdef JUPITER_BOARD_PINE64
+/* PMU register accesses match Arm Cortex-A53 TRM DDI 0500J §12.5.
+ * PMCCFILTR is initialized explicitly: U-Boot is not its owner anymore.
+ * PMCCNTR remains a CPU-cycle counter, useful for real cycle profiling.
+ */
+void pine64_pmu_init(void);
+uint32_t pine64_pmu_mhz(void);
+uint32_t pine64_cycles_to_us(uint32_t cycles);
+void pine64_delay_us(uint32_t us);
+void pine64_delay_ns(uint32_t ns);
+
+static inline void pmu_init(void) { pine64_pmu_init(); }
+static inline uint32_t pmu_cycles(void)
+{
+    uint32_t v;
+    __asm__ volatile("isb\n\tmrc p15, 0, %0, c9, c13, 0" : "=r"(v) :: "memory");
+    return v;
+}
+#define PMU_CPU_MHZ (pine64_pmu_mhz())
+static inline void delay_us(uint32_t us) { pine64_delay_us(us); }
+static inline void delay_ns(uint32_t ns) { pine64_delay_ns(ns); }
+#else
 /* Enable cycle counter. Call once from privileged mode (SVC) at boot. */
 static inline void pmu_init(void)
 {
@@ -45,4 +68,5 @@ static inline void delay_ns(uint32_t ns)
     while ((pmu_cycles() - start) < target);
 }
 
+#endif /* JUPITER_BOARD_PINE64 */
 #endif /* PMU_H */

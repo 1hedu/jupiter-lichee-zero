@@ -11,7 +11,11 @@
 #include "jupiter.h"
 #include "snes.h"
 #include "../../libvgm/vgm_player.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "step_on_beat.h"
+#endif
 #include "the_moon.h"
 #include "pokemon_gym.h"
 
@@ -774,6 +778,9 @@ static vgm_player_t vgm;
 static int16_t stereo[2048];
 
 #include "hstimer.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+#endif
 
 /* ISR-driven VGM producer. Self-paces to mix_buf consumption so
  * NES/GB chips (heavier per-sample than SN76489/YM2612) stay clean
@@ -843,7 +850,13 @@ typedef struct {
 } track_t;
 
 static const track_t tracks[] = {
-    { "OutRun - Step on Beat",   vgm_step_on_beat, vgm_step_on_beat_len, 48000 * 5 },
+    {
+#ifdef JUPITER_BOARD_PINE64
+    PINE64_MUSIC_TITLE
+#else
+    "OutRun - Step on Beat"
+#endif
+,   vgm_step_on_beat, vgm_step_on_beat_len, 48000 * 5 },
     { "DuckTales - The Moon",    vgm_the_moon,     vgm_the_moon_len,     48000 * 8 },
     { "Pokemon - Gym Battle",    vgm_pokemon_gym,  vgm_pokemon_gym_len,  65536 * 3 },
 };
@@ -939,7 +952,11 @@ void main(void)
      * driven production for menu-binary icache pressure). */
     hstimer_init();
     audio_isr_armed = 1;
+#ifdef JUPITER_BOARD_PINE64
+    pine64_hstimer_set_us((AUDIO_TICK_SCANLINES * 175u + 2u) / 3u, 0, vgm_audio_tick);
+#else
     hstimer_set_repeating(0, AUDIO_TICK_SCANLINES, vgm_audio_tick);
+#endif
 
     irq_global_enable();  /* Unmask IRQs — DMA ISR now services audio */
 

@@ -33,10 +33,17 @@
  * Build: make GAME=examples/opn2_hw_xtal/main.c
  */
 #include "jupiter.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/demos/ym3438_setup.h"
+#endif
 #include "input.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "sortie.h"
+#endif
 
 /* SN76489 emulator (libvgm) */
 extern void *sn76489_jupiter_init(uint32_t clock, uint32_t rate);
@@ -166,6 +173,10 @@ int main(void)
     timer_init();
     mmu_init();
     pmu_init();
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_ym3438_demo_setup(YM_CLK_EXT_XTAL))
+        return 0;
+#endif
 
     uart_puts("\n========================================\n");
     uart_puts("  YM3438 + 8 MHz crystal — V3s clock-free\n");
@@ -196,8 +207,10 @@ int main(void)
     /* YM3438: external 8 MHz crystal — V3s does NO clock setup. The osc
      * has been free-running since the board powered up. ym3438_hw_init
      * just configures GPIO + pulses /IC to reset the chip. */
+#ifndef JUPITER_BOARD_PINE64
     ym3438_hw_set_clock(YM_CLK_EXT_XTAL);
     ym3438_hw_init();
+#endif
 
     vgm_init(vgm_sortie, vgm_sortie_len);
     uart_puts("[vgm] Comix Zone — Sortie loaded\n");

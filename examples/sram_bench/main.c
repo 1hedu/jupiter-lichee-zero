@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../../boards/pine64/demos/sram_bench.inc"
+#else
 /*
  * SRAM_C Diagnostic + Benchmark
  *
@@ -212,3 +215,5 @@ int main(void)
     while (1);
     return 0;
 }
+
+#endif /* JUPITER_BOARD_PINE64 */

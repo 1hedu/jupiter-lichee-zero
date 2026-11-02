@@ -1,5 +1,36 @@
 # Jupiter Modes — hardware-native display configurations
 
+## PINE A64+ port
+
+The sections below record the original V3s design and Lichee Pi Zero bench
+results. On PINE A64+, mixer0 has **VI0 + UI0 + UI1 + UI2**, so the port maps
+the RGB `video_vi1_init()` window and Mode 5 bottom viewport to the real
+**UI1** channel. It preserves the inherited HDMI timing and centers a
+480×272 canvas; it does not program V3s VI1 registers on A64.
+
+Mode 3 selects combined pixel/global alpha. Mode 4 uses A64 VI0's NV12
+format, CSC at mixer0 + `0xAA050`, and the VSU to upsample the half-resolution
+chroma plane with 20-bit scale steps. Mode 5 uses independent VI0/UI1
+half-height windows, with UI0 as the full-canvas HUD. The mode-4 test still
+needs the two displayed squares compared on physical hardware.
+
+A64 has only HSTimer0. Modes 6 and 7 use it in separate phases with the
+measured native HDMI line period. Mode 7 reads TCON1's live scanline and
+back-porch timing, then delays its first band to the centered canvas start;
+this includes blanking and the large top border at 720p/1080p. Its later
+bands use the same timer in repeating mode. Physical IRQ/latch timing and
+mid-frame LADDR behavior remain board tests, not an emulation result. The A64
+DE2 probe keeps the latest 13 colorkey configurations, uses UI1 as the key
+and animation plane, and tests four subwindows on **VI0**. The V3s success
+reports below do not prove the corresponding A64 capabilities.
+
+Register mapping references:
+[Linux v6.18 mixer configuration](https://github.com/torvalds/linux/blob/v6.18/drivers/gpu/drm/sun4i/sun8i_mixer.c),
+[VI scaler](https://github.com/torvalds/linux/blob/v6.18/drivers/gpu/drm/sun4i/sun8i_vi_scaler.c),
+[CSC layout](https://github.com/torvalds/linux/blob/v6.18/drivers/gpu/drm/sun4i/sun8i_csc.h).
+
+## Original V3s mode design
+
 An SNES homage: numbered modes, each a fixed **DE2 mixer layer stack**.
 The difference from the SNES is what "mode" means here — these are
 *scanout* configurations. Nothing in a Jupiter Mode touches a pixel
@@ -76,8 +107,9 @@ in** (Lichee Pi Zero bench):
    MIN=MAX magenta key, but inverted from the magic-pink convention —
    pixels MATCHING the key kept the top layer while everything else
    went transparent to the layer below ("key = the opaque set"). The
-   probe's round-2 configs (12–23) sweep the direction bits combined
-   with the proven enables, hunting the match→transparent mode. The
+   current probe has 13 round-3 configs (0–12), testing regression
+   baselines, RGB window exclusion and CFG channel/inversion guesses.
+   Config 3 excludes blue=255 from the accepted key window. The
    moment the magenta field itself punches through: hardware magic
    pink, and Mode 5 grows a dual-full-playfield variant. Even the
    inverse mode as-is is usable (single-color hardware masks/cutouts).

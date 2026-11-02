@@ -45,7 +45,15 @@ void main(void)
     if (rc < 0) { uart_putc('-'); uart_putdec((uint32_t)-rc); }
     else        { uart_putdec((uint32_t)rc); }
     uart_puts("\n");
-    if (rc != 0) { uart_puts("[m4] decode failed — halting\n"); while (1) ; }
+    if (rc != 0) {
+#ifdef JUPITER_BOARD_PINE64
+        uart_puts("[m4] decode failed; scanout comparison not started\n");
+        while (1) video_wait_vblank(); /* keep USB/serial menu exit serviced */
+#else
+        uart_puts("[m4] decode failed — halting\n");
+        while (1) ;
+#endif
+    }
 
     /* Note: once Mode 4 takes VI0, FB0 is no longer scanned — the
      * screen backdrop is the blender's background color (black). */

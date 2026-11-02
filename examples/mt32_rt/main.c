@@ -16,6 +16,10 @@
 #include <string.h>
 #include <math.h>
 #include "c_interface/c_interface.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "assets.h"
+#include <stdlib.h>
+#endif
 
 /* ================================================================
  *  On-screen state display (5x7 pixel font, reused from menu)
@@ -127,11 +131,17 @@ extern float expf_c(float);
 extern float logf_c(float);
 extern float log10f_c(float);
 
+#ifdef JUPITER_BOARD_PINE64
+/* User-owned ROMs live on the second FAT partition, outside the image. */
+static uint8_t *control_rom, *pcm_rom;
+#else
 /* ---- Embedded binary assets (objcopy) ---- */
 extern const uint8_t _binary_examples_mt32_rt_roms_MT32_CONTROL_ROM_start[];
 extern const uint8_t _binary_examples_mt32_rt_roms_MT32_CONTROL_ROM_end[];
 extern const uint8_t _binary_examples_mt32_rt_roms_MT32_PCM_ROM_start[];
 extern const uint8_t _binary_examples_mt32_rt_roms_MT32_PCM_ROM_end[];
+
+#endif
 
 #include "midi_catalog.h"
 
@@ -955,6 +965,9 @@ void main(void)
     dcache_clean_fb(OVL1_ADDR);
     dcache_clean_fb(SPR_ADDR);
 
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("[cpu] measured "); uart_putdec(PMU_CPU_MHZ); uart_puts(" MHz\n");
+#else
     /* CPU clock report */
     {
         uint32_t pll = *(volatile uint32_t *)0x01C20000;
@@ -963,6 +976,8 @@ void main(void)
         uint32_t m = (pll & 0x3) + 1;
         uart_puts("[cpu] "); uart_putdec(24 * n * k / m); uart_puts(" MHz\n");
     }
+
+#endif
 
     /* Read CPACR + FPEXC to verify NEON full-32-reg + Advanced SIMD enabled.
      * CPACR bit 30 (D32DIS) should be 0 for d16-d31 access.
@@ -980,6 +995,21 @@ void main(void)
         uart_puts("\n");
     }
 
+#ifdef JUPITER_BOARD_PINE64
+    cpp_init();
+    uint32_t ctrl_size = 0, pcm_size = 0;
+    control_rom = pine64_load_asset("0:/ROMS/MT32/CONTROL.ROM", 65536u, 262144u, &ctrl_size);
+    pcm_rom = pine64_load_asset("0:/ROMS/MT32/PCM.ROM", 524288u, 2097152u, &pcm_size);
+    if (!control_rom || !pcm_rom) {
+        free(control_rom); free(pcm_rom); control_rom = pcm_rom = NULL;
+        pine64_notice("MT-32 ROM FILES REQUIRED",
+            "Copy your matching MT-32 ROM pair to the JUPITER data partition.\n\n"
+            "ROMS/MT32/CONTROL.ROM\nROMS/MT32/PCM.ROM\n\n"
+            "The MIDI catalog and synthesizer are included.\n"
+            "Press Z/Enter or X to return.");
+        return;
+    }
+#endif
     audio_init();
 
     /* ---- Create MT-32 synth ---- */
@@ -987,22 +1017,38 @@ void main(void)
     synth = mt32emu_create_context((mt32emu_report_handler_i){0}, NULL);
     if (!synth) {
         uart_puts("[mt32] create_context failed!\n");
+#ifdef JUPITER_BOARD_PINE64
+        free(control_rom); free(pcm_rom); control_rom = pcm_rom = NULL;
+        pine64_notice("MT-32 ALLOCATION FAILED", "The synthesizer context could not be allocated.");
+        return;
+#else
         while (1);
+#endif
     }
 
+#ifndef JUPITER_BOARD_PINE64
     uint32_t ctrl_size = (uint32_t)(_binary_examples_mt32_rt_roms_MT32_CONTROL_ROM_end -
                                      _binary_examples_mt32_rt_roms_MT32_CONTROL_ROM_start);
     uint32_t pcm_size  = (uint32_t)(_binary_examples_mt32_rt_roms_MT32_PCM_ROM_end -
                                      _binary_examples_mt32_rt_roms_MT32_PCM_ROM_start);
+#endif
     uart_puts("[mt32] Control ROM: "); uart_putdec(ctrl_size);
     uart_puts(" bytes, PCM ROM: "); uart_putdec(pcm_size); uart_puts(" bytes\n");
 
     mt32emu_return_code rc;
     rc = mt32emu_add_rom_data(synth,
+        #ifdef JUPITER_BOARD_PINE64
+        control_rom, ctrl_size, NULL);
+#else
         _binary_examples_mt32_rt_roms_MT32_CONTROL_ROM_start, ctrl_size, NULL);
+#endif
     uart_puts("[mt32] add Control ROM: rc="); uart_putdec((uint32_t)rc); uart_puts("\n");
     rc = mt32emu_add_rom_data(synth,
+        #ifdef JUPITER_BOARD_PINE64
+        pcm_rom, pcm_size, NULL);
+#else
         _binary_examples_mt32_rt_roms_MT32_PCM_ROM_start, pcm_size, NULL);
+#endif
     uart_puts("[mt32] add PCM ROM: rc="); uart_putdec((uint32_t)rc); uart_puts("\n");
 
     mt32emu_set_analog_output_mode(synth, analog_modes[analog_mode_idx]);
@@ -1016,7 +1062,14 @@ void main(void)
     uart_puts("[mt32] open_synth: rc="); uart_putdec((uint32_t)rc); uart_puts("\n");
     if ((int32_t)rc < 0) {
         uart_puts("[mt32] open failed!\n");
+#ifdef JUPITER_BOARD_PINE64
+        mt32emu_free_context(synth); synth = NULL;
+        free(control_rom); free(pcm_rom); control_rom = pcm_rom = NULL;
+        pine64_notice("MT-32 ROM PAIR REJECTED", "Munt could not open this ROM pair.\nUse a supported, matching Control and PCM pair.\nSee serial output for the Munt return code.");
+        return;
+#else
         while (1);
+#endif
     }
 
     uint32_t actual_rate = mt32emu_get_actual_stereo_output_samplerate(synth);
@@ -1296,12 +1349,16 @@ void main(void)
         if (((frame + 1) % 60) == 0) {
             uint32_t fill = mix_wr - mix_rd;
             uint32_t avg = (uint32_t)(pmu_total / pmu_frames);
+#ifdef JUPITER_BOARD_PINE64
+            uint32_t cpu_hz = PMU_CPU_MHZ * 1000000u;
+#else
             /* CPU clock from PLL readback */
             uint32_t pll_reg = *(volatile uint32_t *)0x01C20000;
             uint32_t n = ((pll_reg >> 8) & 0x1F) + 1;
             uint32_t k = ((pll_reg >> 4) & 0x3) + 1;
             uint32_t m = (pll_reg & 0x3) + 1;
             uint32_t cpu_hz = 24000000 * n * k / m;
+#endif
             uint32_t budget = cpu_hz / 60;
             uint32_t pct = (uint32_t)((uint64_t)avg * 100 / budget);
 

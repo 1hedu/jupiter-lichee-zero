@@ -11,6 +11,11 @@
 #include "input.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "runtime.h"
+#include "hstimer.h"
+#include "pine64_video.h"
+#endif
 
 /* ================================================================
  * 5x7 pixel font (column-encoded, from opn2_jupiter)
@@ -228,7 +233,11 @@ static const menu_entry_t entries[] = {
     {"Cedar GB (Celebi)",       cedar_gb_main,           ENTRY_DEMO},
     {"Cedar SNES (FF6)",        cedar_snes_main,         ENTRY_DEMO},
     {"Cedar Genesis (Pulse)",   cedar_genesis_main,      ENTRY_DEMO},
+    #ifdef JUPITER_BOARD_PINE64
+    {"Cedar H.264 decode",      cedar_jpeg_main,         ENTRY_DEMO},
+#else
     {"Cedar JPEG decode",       cedar_jpeg_main,         ENTRY_DEMO},
+#endif
 
     {"--- AUDIO ---",           NULL,                    ENTRY_HEADER},
     {"Jupiter Moon",            jupiter_moon_main,       ENTRY_DEMO},
@@ -287,7 +296,11 @@ static void menu_render(uint32_t *fb, int sel, int scroll)
     memset32_neon((uint32_t)fb, COL_BG, LCD_W * LCD_H * 4);
 
     /* Title */
+#ifdef JUPITER_BOARD_PINE64
+    menu_draw_text(fb, "JUPITER - PINE64", 105, TITLE_Y, 3, COL_TITLE);
+#else
     menu_draw_text(fb, "JUPITER SDK", 160, TITLE_Y, 3, COL_TITLE);
+#endif
 
     /* List */
     for (int i = 0; i < VISIBLE && (scroll + i) < (int)NUM_ENTRIES; i++) {
@@ -310,10 +323,49 @@ static void menu_render(uint32_t *fb, int sel, int scroll)
     }
 
     /* Footer */
+#ifdef JUPITER_BOARD_PINE64
+    menu_draw_text(fb, "ARROWS/WASD:MOVE  ENTER/Z:OPEN  ESC/F12:MENU", 12, LCD_H - 16, 1, COL_FOOTER);
+#else
     menu_draw_text(fb, "A:SELECT  UP/DOWN:SCROLL  RESET:BACK", 24, LCD_H - 16, 1, COL_FOOTER);
+#endif
 
     dcache_clean_fb((uint32_t)fb);
 }
+
+#ifdef JUPITER_BOARD_PINE64
+/* Shared demo notices use the same font as the launcher and work over
+ * serial as well as HDMI. Status does not wait; notice waits for a fresh
+ * confirm/back press so the launch key cannot instantly dismiss errors. */
+void pine64_status(const char *title, const char *details)
+{
+    uart_puts("\n["); uart_puts(title); uart_puts("]\n");
+    uart_puts(details); uart_puts("\n");
+    video_init();
+    uint32_t *fb = (uint32_t *)FB0_ADDR;
+    memset32_neon(FB0_ADDR, COL_BG, LCD_FB_BYTES);
+    menu_draw_text(fb, title, 12, 12, 2, COL_TITLE);
+    int y = 43;
+    while (*details && y < LCD_H - 28) {
+        char line[75];
+        int n = 0;
+        while (*details && *details != '\n' && n < 74) line[n++] = *details++;
+        line[n] = 0;
+        if (*details == '\n') ++details;
+        menu_draw_text(fb, line, 12, y, 1, COL_NORMAL);
+        y += 13;
+    }
+    menu_draw_text(fb, "ESC/F12: REBOOT TO MENU", 12, LCD_H - 16, 1, COL_FOOTER);
+    dcache_clean_fb(FB0_ADDR);
+    video_swap(FB0_ADDR);
+}
+
+void pine64_notice(const char *title, const char *details)
+{
+    pine64_status(title, details);
+    do { input_poll(); video_wait_vblank(); } while (input_held() & (BTN_A | BTN_B));
+    do { input_poll(); video_wait_vblank(); } while (!(input_pressed() & (BTN_A | BTN_B)));
+}
+#endif
 
 /* Skip to next selectable entry in direction dir (+1 or -1) */
 static int next_selectable(int from, int dir)
@@ -335,19 +387,38 @@ int main(void)
     timer_init();
     mmu_init();
     pmu_init();
+#ifdef JUPITER_BOARD_PINE64
+    irq_init();
+    cpp_init();
+#endif
     video_init();
 
     uart_puts("\n\n========================================\n");
     uart_puts("  JUPITER SDK — Example Menu\n");
     uart_puts("========================================\n");
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("  PINE A64+ 2GB - latest SDK branch: 46 menu demos\n");
+    uart_puts("  Upstream: claude/sdk-review-cleanup-ok3job @ 4fb5904e\n");
+    uart_puts("  Jupiter Modes Tour is selected first\n");
+    uart_puts("  Mercury GPU Bring-Up uses the existing Pico firmware\n");
+    uart_puts("  USB keyboard or serial: arrows/WASD, Enter/Z select\n");
+    uart_puts("  Escape/F12: reboot to menu from a demo\n");
+    uart_puts("  Z=A X=B C=X V=Y Q=L E=R 1=Select 2=Start\n");
+    uart_puts("  I/J/K/L=N64 C-buttons; physical N64 optional on PH9\n\n");
+#else
     uart_puts("  N64: Up/Down to scroll, A to select\n");
     uart_puts("       Power-cycle to pick a different demo\n\n");
+#endif
 
     input_init(INPUT_N64);
 
     uint32_t *fb = (uint32_t *)FB0_ADDR;
     int sel = next_selectable(-1, +1);  /* first selectable */
     int scroll = 0;
+#ifdef JUPITER_BOARD_PINE64
+    uint32_t repeat_buttons = 0, repeat_tick = 0;
+    unsigned repeating = 0;
+#endif
 
     /* Clear overlay layer (UI0) — otherwise random DRAM garbage blends over
      * VI0 and washes out the menu colors. Fully transparent = show VI0 only. */
@@ -373,6 +444,14 @@ int main(void)
 
         input_poll();
         uint32_t pressed = input_pressed();
+#ifdef JUPITER_BOARD_PINE64
+        uint32_t held_direction = input_held() & (BTN_UP | BTN_DOWN);
+        if (held_direction != repeat_buttons) {
+            repeat_buttons = held_direction; repeat_tick = timer_read(); repeating = 0;
+        } else if (held_direction && ticks_to_us(timer_elapsed(repeat_tick, timer_read())) > (repeating ? 110000u : 400000u)) {
+            pressed |= held_direction; repeat_tick = timer_read(); repeating = 1;
+        }
+#endif
         int changed = 0;
 
         if (pressed & BTN_DOWN) {
@@ -390,6 +469,9 @@ int main(void)
             if (sel >= scroll + VISIBLE) scroll = sel - VISIBLE + 1;
             if (scroll < 0) scroll = 0;
             menu_render(fb, sel, scroll);
+#ifdef JUPITER_BOARD_PINE64
+            uart_puts("[menu] "); uart_puts(entries[sel].name); uart_puts("\n");
+#endif
         }
 
         if (pressed & BTN_A) {
@@ -415,13 +497,30 @@ int main(void)
                 dcache_clean_fb(OVL_ADDR);
                 dcache_clean_fb(OVL1_ADDR);
                 dcache_clean_fb(SPR_ADDR);
+#ifdef JUPITER_BOARD_PINE64
+                pine64_demo_active(1);
+#endif
                 entries[sel].entry();
+#ifdef JUPITER_BOARD_PINE64
+                pine64_demo_active(0);
+                pine64_audio_stop();
+                hstimer_stop(0);
+                video_init();
+                input_init(INPUT_N64);
+                input_settle();
+                menu_render(fb, sel, scroll);
+                repeat_buttons = 0;
+#endif
                 /* never returns — menu is a boot picker; hard-reset to
                  * pick another demo. */
             }
         }
 
-        while (ticks_to_us(timer_elapsed(t0, timer_read())) < 16667);
+        while (ticks_to_us(timer_elapsed(t0, timer_read())) < 16667) {
+#ifdef JUPITER_BOARD_PINE64
+            pine64_service();
+#endif
+        }
     }
     return 0;
 }

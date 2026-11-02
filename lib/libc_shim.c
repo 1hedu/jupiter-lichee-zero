@@ -392,7 +392,7 @@ int vsnprintf(char *buf, size_t sz, const char *fmt, va_list ap) {
                  * memory; in practice every caller's string is a
                  * std::string or a literal, both well-terminated.)
                  * An explicit precision (%.*s / %.4s) does cap it. */
-                for (int n = 0; *s && (prec < 0 || n < prec); n++)
+                for (int n = 0; (prec < 0 || n < prec) && *s; n++)
                     pos = emit(buf, cap, pos, *s++);
                 break;
             }

@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../../boards/pine64/demos/scaler_probe.inc"
+#else
 /*
  * Jupiter SDK — VSU Scaler Probe
  *
@@ -218,3 +221,5 @@ void main(void)
     while (1)
         __asm__ volatile("wfi");
 }
+
+#endif /* JUPITER_BOARD_PINE64 */

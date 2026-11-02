@@ -3,7 +3,7 @@
  *
  * Wraps the Nuked-SC55 emulator (C++) so it can be driven from plain
  * C code. Loads embedded ROM data, steps the H8 MCU + PCM at the
- * native 64 kHz output rate, and exposes a sample callback for the
+ * native 66207 Hz mkII output rate, and exposes a sample callback for the
  * audio pipeline to consume.
  */
 #ifndef JUPITER_NUKED_SC55_H
@@ -27,12 +27,19 @@ int sc55_init(const uint8_t *rom1, uint32_t rom1_len,
 /* Inject one MIDI byte into the SC-55's UART input. */
 void sc55_post_uart(uint8_t b);
 
-/* Set a callback that fires for each stereo sample produced.
- * Native rate is 64 kHz. Callback runs in the context of sc55_step(). */
+/* Set a callback that fires for each stereo frame produced.
+ * The mkII native rate is 66207 Hz. Runs inside sc55_render(). */
 typedef void (*sc55_sample_cb_t)(int16_t left, int16_t right);
 void sc55_set_sample_callback(sc55_sample_cb_t cb);
 
-/* Run the emulator until it has produced `frames` stereo samples. */
+/* Advance the emulated MCU clock while discarding startup output.
+ * Use this before posting the first MIDI event: the PCM sample rate is
+ * not yet stable during ROM initialization. Maximum duration is 10 s. */
+void sc55_warmup(uint32_t milliseconds);
+
+/* Run the emulator until it has produced `frames` stereo samples.
+ * Callback count is exact, including calls ending between oversampled
+ * pairs. A stalled emulator returns short and stops further rendering. */
 void sc55_render(uint32_t frames);
 
 /* Native output sample rate (Hz). 64000 for SC-55 mk1/JV-880, 66207 for mk2. */

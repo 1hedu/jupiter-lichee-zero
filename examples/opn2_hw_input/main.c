@@ -10,6 +10,9 @@
  * Build: make GAME=examples/opn2_hw_input/main.c
  */
 #include "jupiter.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/demos/ym3438_setup.h"
+#endif
 #include "nes.h"
 #include "gb.h"
 #include "genesis.h"
@@ -17,7 +20,11 @@
 #include "input.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "../../examples/opn2_rt/fighting_back.h"
+#endif
 
 /* Pre-converted tile data */
 #include "../../examples/cedar_nes/vinci_chr.h"
@@ -241,6 +248,10 @@ int main(void)
     timer_init();
     mmu_init();
     pmu_init();
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_ym3438_demo_setup(YM_CLK_SI5351))
+        return 0;
+#endif
 
     uart_puts("\n========================================\n");
     uart_puts("  Jupiter HW OPN2 Input Demo\n");
@@ -325,8 +336,10 @@ int main(void)
     video_vi1_init(SNES_X,SNES_Y,SNES_VW,SNES_VH);
 
     /* ---- YM3438 init AFTER video_init (which clobbers PE_CFG0) ---- */
+#ifndef JUPITER_BOARD_PINE64
     ym3438_hw_set_clock(YM_CLK_CCU_MCLK);
     ym3438_hw_init();
+#endif
     vgm_hw_init(vgm_fighting_back, vgm_fighting_back_len);
     uart_puts("[vgm] Fighting Back loaded, hardware playback\n");
 

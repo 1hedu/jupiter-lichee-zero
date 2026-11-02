@@ -1,5 +1,17 @@
 <div align="center">
 
+## PINE A64+ 2 GB port of the latest SDK branch
+
+The recovered A64 board port builds with `make BOARD=pine64 -j6 boot`.
+It includes all 46 menu demos from `claude/sdk-review-cleanup-ok3job`
+at `4fb5904e`, including Jupiter Modes Tour, DE2 Probe and Mercury GPU Bring-Up.
+See [PINE64 setup](boards/pine64/README.md) and
+[the upstream Mercury hardware/protocol](mercury/README.md). The PINE build
+uses the existing Pico firmware; it does not build or require a replacement.
+The original V3s
+instructions below apply to the default board build.
+
+
 <img src="JupiterSDK-2.png" alt="Jupiter SDK" width="640">
 
 **Bare-metal SDK for the Lichee Pi Zero (Allwinner V3s).**

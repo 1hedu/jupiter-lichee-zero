@@ -206,9 +206,9 @@ registers via `v3s.h` — but no SDK API exists.
   - **D** — Briefing's `listener` local-scoped instead of leaking to
     `_G.listener` and getting overwritten by the next briefing.
 
-  - **C1** — atomic widget-subtree teardown for dead menus: **now
-    wired** (needs a hardware soak test). The historical hang on next
-    cursor move was root-caused to a guisan bug: `FocusHandler::remove`
+  - **C1** — atomic widget-subtree teardown for dead menus is **disabled
+    by default again in the latest branch**. The historical hang on next
+    cursor move exposed a guisan bug: `FocusHandler::remove`
     returned after clearing the *first* matching tracking pointer, so
     a widget that was e.g. both `mLastWidgetWithMouse` and
     `mLastWidgetPressed` (the normal state right after a click) left
@@ -217,16 +217,19 @@ registers via `v3s.h` — but no SDK API exists.
     were never cleared by any destructor path at all. `remove()` now
     clears every tracking pointer (all 8 + the `mWidgets` entry), so
     `~Widget` → `_setFocusHandler(nullptr)` fully unhooks each widget
-    the sweep deletes, and `war1_menu_subtree_sweep()` is invoked from
-    the game loop again. The briefing path registers no
+    the sweep deletes. That fix remains, but a later bench freeze showed
+    it was insufficient to enable the entire teardown safely. The latest
+    `mainloop.cpp` invokes `war1_menu_subtree_sweep()` only when
+    `WAR1_ENABLE_SUBTREE_SWEEP` is explicitly defined for bench work.
+    The briefing path registers no
     ContainerListeners or death listeners, and LuaActionListeners are
-    intentionally immortal, so the focus pointers were the only live
-    cross-reference class.
+    intentionally immortal; the full teardown still needs diagnosis.
 
-  Net (pending on-device verification): dead briefings' widget
-  subtrees and their ARGB buffers are reclaimed each cycle, so a full
-  campaign playthrough should no longer OOM-hang. If it misbehaves,
-  the sweep call in `mainloop.cpp` is a single line to comment out.
+  Net: the default WC1 build still leaks dead briefings' widget subtrees
+  and ARGB buffers (about 1.2 MB per distinct briefing). The later source
+  deliberately preserves the disabled sweep while retaining the focus
+  pointer fix and diagnostic logging. Long campaign sessions can exhaust
+  the heap; this port does not silently re-enable that experimental path.
 
 ## Out of scope (deliberate)
 

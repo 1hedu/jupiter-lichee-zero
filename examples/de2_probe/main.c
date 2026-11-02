@@ -39,6 +39,66 @@
 #include "jupiter.h"
 #include "input.h"
 #include "pmu.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "pine64_video.h"
+/* A64 has one VI channel. Use real UI1 for the RGB key/animation plane,
+ * and exercise VI0's four slots during the subwindow phase. The upstream
+ * comments above describe V3s bench results, not measurements on A64. */
+#define KEY_ATTR       PINE64_UI1_ATTR(0)
+#define KEY_SIZE       PINE64_UI1_SIZE(0)
+#define KEY_COORD      PINE64_UI1_COORD(0)
+#define KEY_PITCH      PINE64_UI1_PITCH(0)
+#define KEY_ADDR       PINE64_UI1_ADDR(0)
+#define KEY_OVL_SIZE   PINE64_UI1_OVL_SIZE
+#define KEY_ATTR_VALUE (UI_EN | UI_FMT_XRGB8888 | UI_GALPHA(255))
+#define SUB_ATTR(i)    VI0_ATTR(i)
+#define SUB_SIZE(i)    VI0_MBSIZE(i)
+#define SUB_COORD(i)   VI0_COOR(i)
+#define SUB_PITCH(i)   VI0_PITCH0(i)
+#define SUB_ADDR(i)    VI0_TOP_LADDR0(i)
+#define SUB_OVL_SIZE   VI0_OVL_SIZE(0)
+#define SUB_BUF_OFFSET 0x80000u
+static uint32_t canvas_offset(uint32_t x, uint32_t y)
+{
+    x += (pine64_video_output_width() - LCD_W) / 2;
+    y += (pine64_video_output_height() - LCD_H) / 2;
+    return (y << 16) | x;
+}
+#else
+#define KEY_ATTR       VI1_ATTR(0)
+#define KEY_SIZE       VI1_MBSIZE(0)
+#define KEY_COORD      VI1_COOR(0)
+#define KEY_PITCH      VI1_PITCH0(0)
+#define KEY_ADDR       VI1_TOP_LADDR0(0)
+#define KEY_OVL_SIZE   VI1_OVL_SIZE(0)
+#define KEY_ATTR_VALUE (VI_ATTR_EN | VI_FMT_XRGB8888)
+#define SUB_ATTR(i)    VI1_ATTR(i)
+#define SUB_SIZE(i)    VI1_MBSIZE(i)
+#define SUB_COORD(i)   VI1_COOR(i)
+#define SUB_PITCH(i)   VI1_PITCH0(i)
+#define SUB_ADDR(i)    VI1_TOP_LADDR0(i)
+#define SUB_OVL_SIZE   VI1_OVL_SIZE(0)
+#define SUB_BUF_OFFSET 0x60000u
+static uint32_t canvas_offset(uint32_t x, uint32_t y)
+{
+    return (y << 16) | x;
+}
+#endif
+
+static void key_route(void)
+{
+#ifdef JUPITER_BOARD_PINE64
+    BLD_ROUTE = ROUTE_P(0, 0) | ROUTE_P(1, 2) | ROUTE_P(2, 1);
+#else
+    BLD_ROUTE = ROUTE_P(0, 0) | ROUTE_P(1, 1) | ROUTE_P(2, 2);
+#endif
+    for (int i = 0; i < 3; ++i) {
+        BLD_INSIZE(i) = WH(LCD_W, LCD_H);
+        BLD_OFFSET(i) = canvas_offset(0, 0);
+        BLD_MODE(i) = BLEND_DEF;
+    }
+    BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
+}
 
 /* ---- tiny font (subset, 5x7) ---- */
 typedef struct { char ch; const char *rows[7]; } glyph_t;
@@ -172,18 +232,17 @@ static void apply_ck(int i)
 {
     /* route: P0=VI0, P1=VI1 (adjacent, keys pair adjacent pipes),
      * P2=UI0 label layer */
-    VI1_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
-    VI1_MBSIZE(0)     = WH(LCD_W, LCD_H);
-    VI1_COOR(0)       = 0;
-    VI1_PITCH0(0)     = LCD_PITCH;
-    VI1_TOP_LADDR0(0) = VI1_BUF;
-    VI1_OVL_SIZE(0)   = WH(LCD_W, LCD_H);
+    KEY_ATTR       = KEY_ATTR_VALUE;
+    KEY_SIZE       = WH(LCD_W, LCD_H);
+    KEY_COORD      = 0;
+    KEY_PITCH      = LCD_PITCH;
+    KEY_ADDR       = VI1_BUF;
+    KEY_OVL_SIZE   = WH(LCD_W, LCD_H);
     BLD_FCOLOR(1)     = 0xFF000000;
     BLD_INSIZE(1)     = WH(LCD_W, LCD_H);
-    BLD_OFFSET(1)     = 0;
+    BLD_OFFSET(1)     = canvas_offset(0, 0);
     BLD_MODE(1)       = BLEND_DEF;
-    BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 1) | ROUTE_P(2, 2);
-    BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
+    key_route();
 
     for (int k = 0; k < 3; k++) {
         BLD_CK_MAX(k) = ck_sweep[i].max;
@@ -218,25 +277,31 @@ static void apply_subwin(void)
     /* four 64x64 solid buffers packed after the key pattern buffer */
     for (int i = 0; i < 4; i++) {
         volatile uint32_t *b =
-            (volatile uint32_t *)(VI1_BUF + 0x60000 + i * SUB_W * SUB_H * 4);
+            (volatile uint32_t *)(VI1_BUF + SUB_BUF_OFFSET + i * SUB_W * SUB_H * 4);
         for (int j = 0; j < SUB_W * SUB_H; j++) b[j] = colors[i];
-        dcache_clean_range(VI1_BUF + 0x60000 + i * SUB_W * SUB_H * 4,
+        dcache_clean_range(VI1_BUF + SUB_BUF_OFFSET + i * SUB_W * SUB_H * 4,
                            SUB_W * SUB_H * 4);
     }
 
     for (int i = 0; i < 4; i++) {
         uint32_t x = 40 + (uint32_t)i * 100, y = 60 + (uint32_t)i * 30;
-        VI1_ATTR(i)       = VI_ATTR_EN | VI_FMT_XRGB8888;
-        VI1_MBSIZE(i)     = WH(SUB_W, SUB_H);
-        VI1_COOR(i)       = (y << 16) | x;   /* position within channel */
-        VI1_PITCH0(i)     = SUB_W * 4;
-        VI1_TOP_LADDR0(i) = VI1_BUF + 0x60000 + (uint32_t)i * SUB_W * SUB_H * 4;
+        SUB_ATTR(i)  = VI_ATTR_EN | VI_FMT_XRGB8888;
+        SUB_SIZE(i)  = WH(SUB_W, SUB_H);
+        SUB_COORD(i) = (y << 16) | x;   /* position within channel */
+        SUB_PITCH(i) = SUB_W * 4;
+        SUB_ADDR(i)  = VI1_BUF + SUB_BUF_OFFSET + (uint32_t)i * SUB_W * SUB_H * 4;
     }
-    VI1_OVL_SIZE(0) = WH(LCD_W, LCD_H);      /* channel canvas          */
+    SUB_OVL_SIZE   = WH(LCD_W, LCD_H);      /* channel canvas          */
     BLD_INSIZE(1)   = WH(LCD_W, LCD_H);
-    BLD_OFFSET(1)   = 0;
+    BLD_OFFSET(1)   = canvas_offset(0, 0);
+#ifdef JUPITER_BOARD_PINE64
+    KEY_ATTR = 0;
+    BLD_ROUTE = ROUTE_P(0, 0) | ROUTE_P(1, 1);
+    BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_FC(0);
+#else
     BLD_ROUTE    = ROUTE_P(0, 0) | ROUTE_P(1, 1) | ROUTE_P(2, 2);
     BLD_PIPE_CTL = PIPE_EN(0) | PIPE_EN(1) | PIPE_EN(2) | PIPE_FC(0);
+#endif
     MIX_GLB_DBUF = DBUF_EN;
 
     uart_puts("[probe] SUBWIN: 4 slots enabled "
@@ -245,7 +310,10 @@ static void apply_subwin(void)
 
 static void subwin_off(void)
 {
-    for (int i = 1; i < 4; i++) VI1_ATTR(i) = 0;
+    for (int i = 1; i < 4; i++) SUB_ATTR(i) = 0;
+#ifdef JUPITER_BOARD_PINE64
+    video_mode4_off(); /* restore VI0 full-size framebuffer and stride */
+#endif
     MIX_GLB_DBUF = DBUF_EN;
 }
 
@@ -257,14 +325,14 @@ static void apply_anim_frame(uint32_t frame, const int16_t *sinq8)
     uint32_t h = (uint32_t)(80 + ((SINQ(frame * 2 + 64) * 40) >> 8));
     uint32_t x = (uint32_t)(LCD_W / 2 - w / 2 + ((SINQ(frame) * 100) >> 8));
     uint32_t y = (uint32_t)(LCD_H / 2 - h / 2 + ((SINQ(frame * 3) * 40) >> 8));
-    VI1_ATTR(0)       = VI_ATTR_EN | VI_FMT_XRGB8888;
-    VI1_MBSIZE(0)     = WH(w, h);
-    VI1_COOR(0)       = 0;
-    VI1_PITCH0(0)     = LCD_PITCH;           /* window into key pattern */
-    VI1_TOP_LADDR0(0) = VI1_BUF;
-    VI1_OVL_SIZE(0)   = WH(w, h);
+    KEY_ATTR       = KEY_ATTR_VALUE;
+    KEY_SIZE       = WH(w, h);
+    KEY_COORD      = 0;
+    KEY_PITCH      = LCD_PITCH;           /* window into key pattern */
+    KEY_ADDR       = VI1_BUF;
+    KEY_OVL_SIZE   = WH(w, h);
     BLD_INSIZE(1)     = WH(w, h);
-    BLD_OFFSET(1)     = (y << 16) | x;
+    BLD_OFFSET(1)     = canvas_offset(x, y);
     MIX_GLB_DBUF = DBUF_EN;
 }
 
@@ -280,6 +348,11 @@ int main(void)
     uart_puts("  0-12 colorkey round 3 (3 = magic-pink candidate), then sub-windows, animation\n\n");
 
     video_init();
+#ifdef JUPITER_BOARD_PINE64
+    if (!pine64_video_is_ready()) return 1;
+    uart_puts("[probe] A64: VI0 subwindows; UI1 key/animation plane. "
+              "V3s bench results do not establish A64 results.\n");
+#endif
     video_mode(2);   /* VI0 + VI1 + UI0 routing baseline */
 
     /* sin LUT for the gradient animation + anim phase */
@@ -318,6 +391,7 @@ int main(void)
                 draw_text(ovl, LCD_W, "SUBWINDOWS 4", 8, 4, 2, 0xFFF2C14E);
                 apply_subwin();
             } else {
+                key_route();
                 draw_text(ovl, LCD_W, "ANIM WINDOW", 8, 4, 2, 0xFFF2C14E);
                 uart_puts("[probe] ANIM: breathing window — watch for "
                           "tearing\n");

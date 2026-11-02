@@ -391,6 +391,9 @@ int main(void)
 
     /* ---- GIC must be set up BEFORE audio_start registers its DMA handler ---- */
     /* Verify CPU clock */
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("[cpu] measured "); uart_putdec(PMU_CPU_MHZ); uart_puts(" MHz\n");
+#else
     {
         uint32_t pll = REG32(0x01C20000);
         uint32_t n = ((pll >> 8) & 0x1F) + 1;
@@ -400,6 +403,7 @@ int main(void)
         uart_puts(" freq="); uart_putdec(24 * n * k / m);
         uart_puts("MHz\n");
     }
+#endif
 
     uart_puts("[dbg] irq_init...\n");
     irq_init();
@@ -451,7 +455,13 @@ int main(void)
      * size; cedar's region starts at 0x43E00000 leaving 1 MB here for
      * the 960 KB ARGB sheet). 0x43400000 was inside the CODE bss
      * region — collides with bundled menu builds. */
+#ifdef JUPITER_BOARD_PINE64
+    /* 0x43D00000 contains active audio DMA on A64. Its dedicated Cedar
+     * atlas arena stays free in this demo, which does no VE decoding. */
+    uint32_t *gen_sheet = (uint32_t *)0x43400000;
+#else
     uint32_t *gen_sheet = (uint32_t *)0x43D00000;
+#endif
     uint32_t gen_sz = (uint32_t)(_binary_tools_pulseman_argb_end -
                                   _binary_tools_pulseman_argb_start);
     memcpy(gen_sheet, _binary_tools_pulseman_argb_start, gen_sz);
@@ -632,12 +642,14 @@ int main(void)
     uint32_t stat_underruns_last = audio_underruns;
     uint32_t stat_depth_min = TARGET_DEPTH;
 
+#ifndef JUPITER_BOARD_PINE64
     /* Codec FIFO status: 0x01C22C08
      * Bit 0: TXU_INT — TX FIFO underrun (w1c)
      * Bit 3: TXE_INT — TX FIFO empty
      * Bits [22:8]: TX FIFO available count */
     #define DAC_FIFOS REG32(0x01C22C08)
     uint32_t codec_fifo_xruns = 0;
+#endif
 
     while (1) {
         uint32_t frame_t0 = pmu_cycles();
@@ -794,7 +806,7 @@ int main(void)
         memcpy((void *)SPR_ADDR, snes_comp, SNES_VW * SNES_VH * 4);
         dcache_clean_range(SPR_ADDR, SNES_VW * SNES_VH * 4);
 
-        render_us = (pmu_cycles() - render_t0) / 1200;
+        render_us = (pmu_cycles() - render_t0) / PMU_CPU_MHZ;
         } /* end if (needs_render) */
 
         /* ============================================================ */
@@ -821,8 +833,9 @@ int main(void)
         }
         audio_update();
 
-        uint32_t audio_us = (pmu_cycles() - audio_t0) / 1200;
+        uint32_t audio_us = (pmu_cycles() - audio_t0) / PMU_CPU_MHZ;
 
+#ifndef JUPITER_BOARD_PINE64
         /* Check codec hardware FIFO for underrun */
         {
             uint32_t fifos = DAC_FIFOS;
@@ -831,6 +844,7 @@ int main(void)
                 DAC_FIFOS = 1;         /* w1c: clear the flag */
             }
         }
+#endif
 
         /* ============================================================ */
         /* Flush + sync                                                  */
@@ -842,7 +856,7 @@ int main(void)
         video_set_overlay(ovl_addr);
         buf = !buf;
 
-        uint32_t frame_us = (pmu_cycles() - frame_t0) / 1200;
+        uint32_t frame_us = (pmu_cycles() - frame_t0) / PMU_CPU_MHZ;
 
         /* ============================================================ */
         /* Telemetry: once per second                                    */
@@ -876,7 +890,11 @@ int main(void)
             uart_puts(" glitch="); uart_putdec(glitch_count);
             uart_puts(" gdelta="); uart_putdec(glitch_max_delta);
             uart_puts(" drop="); uart_putdec(drop_count);
+#ifdef JUPITER_BOARD_PINE64
+            uart_puts(" hwxrun=n/a"); /* V3s FIFO register is not A64's. */
+#else
             uart_puts(" hwxrun="); uart_putdec(codec_fifo_xruns);
+#endif
             uart_puts(" dma="); uart_putdec(audio_transitions);
             uart_puts(" t="); uart_putdec(frame_count / 60);
             uart_puts("s\n");

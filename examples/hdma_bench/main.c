@@ -1,3 +1,6 @@
+#if defined(JUPITER_BOARD_PINE64)
+#include "../../boards/pine64/demos/hdma_bench.inc"
+#else
 /*
  * HDMA Work Distribution Benchmark
  *
@@ -316,3 +319,5 @@ int main(void)
     while (1);
     return 0;
 }
+
+#endif /* JUPITER_BOARD_PINE64 */

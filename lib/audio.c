@@ -14,10 +14,12 @@
 #define SAMPLE_RATE     48000
 #define MIX_BUF_SIZE    4096
 #define MIX_BUF_MASK    (MIX_BUF_SIZE - 1)
+#ifndef JUPITER_BOARD_PINE64
 #define DMA_DESC_A_ADDR (AUDIO_BUF_ADDR + 0x10000)
 #define DMA_DESC_B_ADDR (AUDIO_BUF_ADDR + 0x10000 + 32)
 #define DMA_HALF_BYTES_16  (AUDIO_BUF_HALF * 2)      /* 16-bit: 2 bytes/sample */
 #define DMA_HALF_BYTES_32  (AUDIO_BUF_HALF * 4)      /* 32-bit: 4 bytes/sample */
+#endif
 
 int16_t  mix_buf[MIX_BUF_SIZE];
 volatile uint32_t mix_wr = 0;
@@ -25,6 +27,7 @@ volatile uint32_t mix_rd = 0;
 volatile uint32_t audio_underruns = 0;
 volatile uint32_t audio_transitions = 0;
 
+#ifndef JUPITER_BOARD_PINE64
 /* 16-bit DMA buffers (default) */
 static int16_t *dma_buf_a_16 = (int16_t *)AUDIO_BUF_ADDR;
 static int16_t *dma_buf_b_16 = (int16_t *)(AUDIO_BUF_ADDR + DMA_HALF_BYTES_16);
@@ -50,6 +53,7 @@ static volatile uint8_t mix_in_progress = 0;
 static void audio_dma_refill_a(void);
 static void audio_dma_refill_b(void);
 void audio_dma_isr(void);
+#endif
 
 #define AUDIO_MAX_CHANNELS 4
 /* Per-channel position is split: pos_int is the integer sample index
@@ -81,7 +85,8 @@ static const int16_t sine_table[SINE_LEN] = {
    -23169,-20787,-18204,-15446,-12539, -9511, -6392, -3211,
 };
 
-/* ADDA_PR indirect access */
+#ifndef JUPITER_BOARD_PINE64
+/* ADDA_PR indirect access: V3s only. A64 uses audio_hw.c. */
 static void aw(uint32_t reg, uint32_t val) {
     volatile uint32_t *pr = (volatile uint32_t *)0x01C23000;
     uint32_t r;
@@ -462,6 +467,47 @@ void audio_update(void)
         }
     }
 }
+#endif /* !JUPITER_BOARD_PINE64 */
+
+#ifdef JUPITER_BOARD_PINE64
+/* Private board-driver hooks; the software mixer remains shared. */
+static uint32_t pine64_mix_lock(void)
+{
+    uint32_t cpsr;
+    __asm__ volatile("mrs %0, cpsr\n\tcpsid i" : "=r"(cpsr) :: "memory");
+    return cpsr;
+}
+
+static void pine64_mix_unlock(uint32_t cpsr)
+{
+    __asm__ volatile("dmb ish" ::: "memory");
+    if (!(cpsr & (1u << 7))) __asm__ volatile("cpsie i" ::: "memory");
+}
+
+static uint32_t pine64_mix_space(void)
+{
+    uint32_t depth = mix_wr - mix_rd;
+    return depth <= MIX_BUF_SIZE ? (MIX_BUF_SIZE - depth) / 2u : 0;
+}
+
+void pine64_audio_shared_reset(void)
+{
+    mix_wr = mix_rd = 0;
+    audio_underruns = audio_transitions = 0;
+    for (unsigned i = 0; i < AUDIO_MAX_CHANNELS; ++i)
+        channels[i].active = 0;
+    audio_apu_all_off();
+    audio_genesis_all_off();
+    master_volume = 200;
+}
+
+int pine64_audio_pcm_active(void)
+{
+    for (unsigned i = 0; i < AUDIO_MAX_CHANNELS; ++i)
+        if (channels[i].active) return 1;
+    return 0;
+}
+#endif
 
 /* ---- PCM Mixer ----
  * num_samples is the count of OUTPUT FRAMES (1 frame = 1 stereo L+R pair,
@@ -469,8 +515,17 @@ void audio_update(void)
  * convention — codec DMA reads mix_buf as 16-bit stereo interleaved, so
  * mono PCM channels are duplicated into L+R. */
 void audio_mix(uint32_t num_samples) {
+#ifdef JUPITER_BOARD_PINE64
+    /* A DMA callback can also mix PCM. Keep channel positions and ring
+     * publication atomic with respect to that callback, and never write
+     * over unread stereo frames. Restore the caller's interrupt state. */
+    uint32_t saved_cpsr = pine64_mix_lock();
+    uint32_t available = pine64_mix_space();
+    if (num_samples > available) num_samples = available;
+#else
     mix_in_progress = 1;
     __asm__ volatile("" ::: "memory");
+#endif
     for (uint32_t s = 0; s < num_samples; s++) {
         int32_t sum = 0;
         for (int ch = 0; ch < AUDIO_MAX_CHANNELS; ch++) {
@@ -481,7 +536,15 @@ void audio_mix(uint32_t num_samples) {
             c->pos_int  += c->pos_frac >> 16;
             c->pos_frac &= 0xFFFF;
             if (c->pos_int >= c->length) {
-                if (c->loop) c->pos_int -= c->length;
+                if (c->loop) {
+#ifdef JUPITER_BOARD_PINE64
+                    /* A short loop may wrap several times at a high
+                     * source rate. A single subtraction would overrun. */
+                    c->pos_int %= c->length;
+#else
+                    c->pos_int -= c->length;
+#endif
+                }
                 else c->active = 0;
             }
         }
@@ -491,8 +554,12 @@ void audio_mix(uint32_t num_samples) {
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;  /* L */
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;  /* R */
     }
+#ifdef JUPITER_BOARD_PINE64
+    pine64_mix_unlock(saved_cpsr);
+#else
     __asm__ volatile("" ::: "memory");
     mix_in_progress = 0;
+#endif
 }
 void audio_pcm_play(uint32_t ch, const int16_t *s, uint32_t len, uint8_t vol, uint8_t loop) {
     /* Delegate to the rate-aware path. src_rate=0 means "current output
@@ -519,6 +586,14 @@ void audio_pcm_play_rate(uint32_t ch, const int16_t *s, uint32_t len,
     if (ch >= AUDIO_MAX_CHANNELS) return;
     if (src_rate == 0) src_rate = current_audio_rate;
     pcm_channel_t *c = &channels[ch];
+#ifdef JUPITER_BOARD_PINE64
+    uint32_t saved_cpsr = pine64_mix_lock();
+    if (!s || !len) {
+        c->active = 0;
+        pine64_mix_unlock(saved_cpsr);
+        return;
+    }
+#endif
     /* Mark inactive first so the audio ISR (which now also runs audio_mix)
      * can't observe a half-updated channel mid-rewrite. */
     c->active = 0;
@@ -529,6 +604,9 @@ void audio_pcm_play_rate(uint32_t ch, const int16_t *s, uint32_t len,
     /* Publish all field writes before re-arming. */
     __sync_synchronize();
     c->active=1;
+#ifdef JUPITER_BOARD_PINE64
+    pine64_mix_unlock(saved_cpsr);
+#endif
 }
 int audio_pcm_channel_busy(uint32_t ch) {
     if (ch >= AUDIO_MAX_CHANNELS) return 0;
@@ -607,15 +685,28 @@ static void apu_envelope_tick(void) {
             int8_t nv=(int8_t)n->volume+n->env_dir;if(nv>=0&&nv<=15)n->volume=nv;}}
 }
 void audio_apu_mix(uint32_t num) {
+#ifdef JUPITER_BOARD_PINE64
+    uint32_t saved_cpsr = pine64_mix_lock();
+    uint32_t available = pine64_mix_space();
+    if (num > available) num = available;
+#else
     mix_in_progress = 1;                 /* keep ISR top-up off mix_wr */
     __asm__ volatile("" ::: "memory");
+#endif
     for(uint32_t s=0;s<num;s++){
         int32_t out=((int32_t)apu_tick()*master_volume)>>8;
         mix_buf[mix_wr++&MIX_BUF_MASK]=(int16_t)out;
+#ifdef JUPITER_BOARD_PINE64
+        mix_buf[mix_wr++&MIX_BUF_MASK]=(int16_t)out;
+#endif
         if(++apu_env_tick>=ENV_INTERVAL){apu_env_tick=0;apu_envelope_tick();}
     }
+#ifdef JUPITER_BOARD_PINE64
+    pine64_mix_unlock(saved_cpsr);
+#else
     __asm__ volatile("" ::: "memory");
     mix_in_progress = 0;
+#endif
 }
 void audio_apu_note_on(uint32_t ch,uint32_t f,uint8_t v,uint8_t d){
     if(ch>1) return;
@@ -982,8 +1073,14 @@ static int16_t psg_tone_tick(psg_tone_t *t)
 /* ---- Genesis mixer: FM + PSG → ring buffer ---- */
 void audio_genesis_mix(uint32_t num_samples)
 {
+#ifdef JUPITER_BOARD_PINE64
+    uint32_t saved_cpsr = pine64_mix_lock();
+    uint32_t available = pine64_mix_space();
+    if (num_samples > available) num_samples = available;
+#else
     mix_in_progress = 1;                 /* keep ISR top-up off mix_wr */
     __asm__ volatile("" ::: "memory");
+#endif
     for (uint32_t s = 0; s < num_samples; s++) {
         /* Envelope prescaler: tick every 3rd sample (matches YM2612 hw) */
         fm_env_tick_now = (fm_env_div_count == 0) ? 1 : 0;
@@ -1022,10 +1119,26 @@ void audio_genesis_mix(uint32_t num_samples)
         if (sum > 32767) sum = 32767;
         if (sum < -32768) sum = -32768;
         mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;
+#ifdef JUPITER_BOARD_PINE64
+        mix_buf[mix_wr++ & MIX_BUF_MASK] = (int16_t)sum;
+#endif
     }
+#ifdef JUPITER_BOARD_PINE64
+    pine64_mix_unlock(saved_cpsr);
+#else
     __asm__ volatile("" ::: "memory");
     mix_in_progress = 0;
+#endif
 }
+
+#ifdef JUPITER_BOARD_PINE64
+/* The original A7 assembly writes mono slots. Preserve its public API on
+ * A64 using the C mixer with the board's interleaved-stereo ring format. */
+void audio_genesis_mix_asm(uint32_t num_samples)
+{
+    audio_genesis_mix(num_samples);
+}
+#endif
 
 /* ---- FM public API ---- */
 
@@ -1134,6 +1247,7 @@ void audio_genesis_all_off(void)
 uint32_t current_audio_rate    = 48000;
 uint32_t current_audio_rate_q8 = 48000 * 256;
 
+#ifndef JUPITER_BOARD_PINE64
 void audio_set_rate(uint32_t rate)
 {
     /* current_audio_rate is set to the *actual* DAC frequency below
@@ -1262,3 +1376,4 @@ void audio_set_rate(uint32_t rate)
     uart_puthex(REG32(0x01C22C00+0x00));
     uart_puts("\n");
 }
+#endif /* !JUPITER_BOARD_PINE64 */

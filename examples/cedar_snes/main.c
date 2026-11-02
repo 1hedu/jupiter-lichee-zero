@@ -10,6 +10,9 @@
 #include "snes.h"
 #include "pmu.h"
 #include <string.h>
+#ifdef JUPITER_BOARD_PINE64
+#include "../../boards/pine64/cedar_status.h"
+#endif
 
 #include "soldier_thumb.h"
 #include "../../tools/h264_template_448x928.h"
@@ -179,6 +182,9 @@ int main(void)
     /* ---- CedarVE encode ---- */
     cedar_argb_to_nv12(sheet, SHEET_W, SHEET_W, SHEET_H);
 
+#ifdef JUPITER_BOARD_PINE64
+    int cedar_ok = 0;
+#endif
     int enc_sz = cedar_h264_encode(SHEET_W, SHEET_H, 10);
     if (enc_sz > 0) {
         uart_puts("[main] encoded: "); uart_putdec(argb_sz/1024);
@@ -198,6 +204,9 @@ int main(void)
         if (rc == 0) {
             /* decode invalidates its output buffers internally */
             cedar_nv12_to_argb(sheet, SHEET_W, SHEET_W, SHEET_H);
+#ifdef JUPITER_BOARD_PINE64
+            cedar_ok = 1;
+#endif
             uart_puts("[main] ROUND-TRIP COMPLETE!\n");
         } else {
             uart_puts("[main] decode fail\n");
@@ -413,6 +422,9 @@ int main(void)
         memset((void*)ovl, 0, LCD_FB_BYTES);
         snes_mode1_render((uint32_t*)fb,(uint32_t*)ovl,LCD_W,LCD_H,bg_palette[0],&bg1,&bg2,NULL,1);
         snes_render_sprites((uint32_t*)ovl,LCD_W,LCD_H,meta_chr,spr_palette,sprites,1,1);
+#ifdef JUPITER_BOARD_PINE64
+        pine64_cedar_draw_status((uint32_t *)ovl, cedar_ok);
+#endif
 
         dcache_clean_range(fb_addr, LCD_FB_BYTES);
         dcache_clean_range(ovl_addr, LCD_FB_BYTES);

@@ -1,5 +1,8 @@
 /*
- * Jupiter SDK — MIDI byte-stream layer over UART1
+ * Jupiter SDK — MIDI byte-stream layer over the board MIDI UART
+ *
+ * PINE A64+: UART2 on PB0 TX / PB1 RX (Pi-2 pins 8 / 10), GIC ID 34.
+ * The V3s pin mapping below applies only to the original Lichee target.
  *
  * Wire format: 31250 baud 8N1 (the MIDI standard since 1983).
  * UART clock source on V3s = OSC24M (24 MHz). Divisor = 24M / (16 × 31250)
@@ -21,6 +24,21 @@
  */
 #include "jupiter.h"
 #include "midi.h"
+
+#ifdef JUPITER_BOARD_PINE64
+#include "pmu.h"
+#define MIDI_UART_BASE UART2_BASE
+#define MIDI_UART_IRQ IRQ_UART2
+#define MIDI_UART_GATE GATE3_UART2
+#define MIDI_UART_RESET RST4_UART2
+#else
+#define MIDI_UART_BASE UART1_BASE
+#define MIDI_UART_IRQ IRQ_UART1
+#define MIDI_UART_GATE GATE3_UART1
+#define MIDI_UART_RESET RST4_UART1
+#endif
+#define MIDI_UART_REG(off) REG32(MIDI_UART_BASE + (off))
+static int s_midi_inited;
 
 /* ================================================================
  *  RX ring buffer
@@ -59,10 +77,16 @@ uint32_t midi_recv_available(void)
 /* ================================================================
  *  ISR — drain RX FIFO into ring
  * ================================================================ */
-static void midi_uart1_isr(void)
+static void midi_uart_isr(void)
 {
-    while (UART1_USR & UART1_USR_RFNE) {
-        uint8_t b = (uint8_t)(UART1_RBR & 0xFF);
+#ifdef JUPITER_BOARD_PINE64
+    /* A wedged status bit cannot keep the CPU inside this IRQ forever. */
+    unsigned budget = 64;
+    while (budget-- && (MIDI_UART_REG(0x7c) & UART1_USR_RFNE)) {
+#else
+    while (MIDI_UART_REG(0x7c) & UART1_USR_RFNE) {
+#endif
+        uint8_t b = (uint8_t)(MIDI_UART_REG(0x00) & 0xFF);
         rx_push(b);
     }
 }
@@ -72,10 +96,26 @@ static void midi_uart1_isr(void)
  * ================================================================ */
 void midi_send(const uint8_t *bytes, uint32_t len)
 {
+#ifdef JUPITER_BOARD_PINE64
+    if (!bytes || !len) return;
+    if (!s_midi_inited) midi_init();
+    if (!s_midi_inited) return;
+#endif
     for (uint32_t i = 0; i < len; i++) {
-        while (!(UART1_USR & UART1_USR_TFNF))
+#ifdef JUPITER_BOARD_PINE64
+        uint32_t start = timer_read();
+        unsigned polls = 100000u;
+        while (!(MIDI_UART_REG(0x7c) & UART1_USR_TFNF)) {
+            if (ticks_to_us(timer_elapsed(start, timer_read())) >= 10000u || !--polls) {
+                uart_puts("[midi/pine64] UART2 transmit timeout\n");
+                return;
+            }
+        }
+#else
+        while (!(MIDI_UART_REG(0x7c) & UART1_USR_TFNF))
             ;
-        UART1_THR = bytes[i];
+#endif
+        MIDI_UART_REG(0x00) = bytes[i];
     }
 }
 
@@ -84,16 +124,28 @@ void midi_send(const uint8_t *bytes, uint32_t len)
  * ================================================================ */
 #define PE_CFG2_REG         REG32(PIO_BASE + 0x98)
 
-static int s_midi_inited = 0;
-
 void midi_init(void)
 {
     if (s_midi_inited) return;
-    s_midi_inited = 1;
-
+#ifdef JUPITER_BOARD_PINE64
+    /* The validated SD2 U-Boot leaves APB2 at OSC24M /1. Do not retune
+     * that shared clock: UART0 diagnostics use it too. */
+    if ((REG32(CCU_BASE + 0x0058) & 0x0303001fu) != 0x01000000u) {
+        uart_puts("[midi/pine64] unsupported APB2 clock; UART2 remains disabled\n");
+        return;
+    }
+    CCU_BUS_CLK_GATE3 |= MIDI_UART_GATE;
+    CCU_BUS_RST4 &= ~MIDI_UART_RESET;
+    delay_us(1);
+    CCU_BUS_RST4 |= MIDI_UART_RESET;
+    /* PB0/PB1 mux 2 = UART2. Preserve all other PB pins, including
+     * the U-Boot serial console on PB8/PB9. RX idle is pulled high. */
+    REG32(PIO_BASE + 0x24) = (REG32(PIO_BASE + 0x24) & ~0xffu) | 0x22u;
+    REG32(PIO_BASE + 0x40) = (REG32(PIO_BASE + 0x40) & ~0xcu) | 0x4u;
+#else
     /* 1. Gate clock + de-assert reset for UART1 */
-    CCU_BUS_CLK_GATE3 |= GATE3_UART1;
-    CCU_BUS_RST4      |= RST4_UART1;
+    CCU_BUS_CLK_GATE3 |= MIDI_UART_GATE;
+    CCU_BUS_RST4      |= MIDI_UART_RESET;
 
     /* 2. Pinmux: PE21 = mux 4 (UART1_TX), PE22 = mux 4 (UART1_RX).
      *    PE_CFG2 covers PE16..PE23; PE21 = bits [23:20], PE22 = [27:24]. */
@@ -101,23 +153,29 @@ void midi_init(void)
     cfg &= ~((0xFu << 20) | (0xFu << 24));
     cfg |=  ((0x4u << 20) | (0x4u << 24));
     PE_CFG2_REG = cfg;
+#endif
 
     /* 3. Set baud rate 31250: divisor = 24,000,000 / (16 * 31250) = 48 */
-    UART1_LCR = UART1_LCR_DLAB;          /* unlock divisor latches */
-    UART1_DLL = 48;
-    UART1_DLH = 0;
-    UART1_LCR = UART1_LCR_8N1;           /* 8N1, lock divisor */
+    MIDI_UART_REG(0x0c) = UART1_LCR_DLAB;          /* unlock divisor latches */
+    MIDI_UART_REG(0x00) = 48;
+    MIDI_UART_REG(0x04) = 0;
+    MIDI_UART_REG(0x0c) = UART1_LCR_8N1;           /* 8N1, lock divisor */
 
     /* 4. Enable + reset both FIFOs, set RX trigger to 1/4 full */
-    UART1_FCR = UART1_FCR_FIFOE | UART1_FCR_RFIFOR |
+    MIDI_UART_REG(0x08) = UART1_FCR_FIFOE | UART1_FCR_RFIFOR |
                 UART1_FCR_XFIFOR | UART1_FCR_RT_QTR;
 
     /* 5. Enable RX data-available IRQ; register + enable in GIC */
-    UART1_IER = UART1_IER_ERBFI;
-    irq_register(IRQ_UART1, midi_uart1_isr);
-    irq_enable(IRQ_UART1);
+    s_midi_inited = 1;
+    MIDI_UART_REG(0x04) = UART1_IER_ERBFI;
+    irq_register(MIDI_UART_IRQ, midi_uart_isr);
+    irq_enable(MIDI_UART_IRQ);
 
+#ifdef JUPITER_BOARD_PINE64
+    uart_puts("[midi/pine64] UART2 PB0 TX / PB1 RX (Pi-2 8/10), 31250 baud, IRQ 34\n");
+#else
     uart_puts("[midi] UART1 init: PE21/PE22 @ 31250 baud, IRQ 33 enabled\n");
+#endif
 }
 
 /* ================================================================

@@ -18,7 +18,11 @@
 #include "jupiter.h"
 #include "genesis.h"
 #include "../../libvgm/vgm_player.h"
+#ifdef JUPITER_BOARD_PINE64
+#include "demo_music.h"
+#else
 #include "fighting_back.h"
+#endif
 
 /* ================================================================
  *  TILE DATA — 4bpp, 32 bytes per tile

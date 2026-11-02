@@ -14,6 +14,41 @@ All pin numbers verified against the Lichee Pi Zero schematic
 
 ---
 
+## PINE A64+ 2 GB: Mercury board-port wiring
+
+The tables below this section describe the **Lichee Pi Zero / V3s**. Their
+edge-pad numbering and SPI mux are not the PINE64 pinout. Use this mapping
+for the PINE port, keeping the existing Pico/SpotPear firmware and TV output:
+
+| PINE Pi-2 pin | A64 signal | SpotPear Pico GPIO |
+|---|---|---|
+| 19 | PC0 SPI0 MOSI | GP4 RX |
+| 23 | PC2 SPI0 SCK | GP6 SCK |
+| 24 | PC3 GPIO CS | GP5 CSn |
+| 6 or other GND | Common ground | GND |
+
+The existing wire protocol is **mode 0, 8-bit, MSB first**, with a `uint16_t`
+little-endian byte length followed by the command bytes under one CS. PINE
+uses 1 MHz and a 25 ms CS lead before the first clock, because the Pico's
+existing receiver polls after finishing its current frame. **No MISO or
+READY wire is needed.** A local transfer count is not a reception acknowledgement.
+DVI_SOCK, AMY and LEGACY_GP0 firmware presets use Pico RX/CLK/CS on
+GP8/GP10/GP9 instead; preserve whichever preset already drives your TV.
+
+The TC358743 outputs **MIPI CSI-2**. The A64 camera input is **parallel 8-bit
+CSI / BT.656**; its MIPI DSI block is display output. There is no direct
+TC358743-to-A64 capture route through those connectors. The PINE demo sends
+commands to the working Pico TV output and labels local capture unavailable.
+Optional read-only bridge diagnostics use Pi-2 pin 5 **PH2/SCL** and pin 3
+**PH3/SDA**, with 3.3 V pull-ups and common ground. They do not configure
+or start the bridge's transmitter.
+
+See [PINE64 Mercury details and primary hardware references](../boards/pine64/README.md#mercury-with-the-existing-pico--spotpear-firmware)
+and [PINE64 external-device wiring](../boards/pine64/EXTERNAL.md). Mercury
+and the PINE YM3438 adapter share PC0/2/3 and must be disconnected from one
+another when changing between those demos. The V3s all-devices-at-once
+claim later in this document does not apply to the PINE adapter.
+
 ## Lichee Pi Zero Pin Reference
 
 ### Edge pins — the "pin N" numbers in this doc

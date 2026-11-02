@@ -412,8 +412,12 @@ int main(void)
             if (++dbg_cnt >= 60) {
                 dbg_cnt = 0;
                 uart_puts("[gen] btn=0x"); uart_puthex(gen_pad.buttons);
+#ifdef JUPITER_BOARD_PINE64
+                uart_puts(" logical keyboard/N64 buttons");
+#else
                 uart_puts(" PB=0x"); uart_puthex(REG32(PIO_BASE + 0x34) & 0xFF);
                 uart_puts(" PG=0x"); uart_puthex(REG32(PIO_BASE + 0xE8) & 0xFF);
+#endif
                 uart_puts("\n");
             }
         }

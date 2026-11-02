@@ -134,7 +134,10 @@ static void jupiter_dlmalloc_abort(void)
  * already eat most of bss; baking 24 MB of arena in there too would
  * push past the 40 MB CODE region. WAR1_BUILD is set by the Makefile
  * when GAME path matches `war1`; otherwise stay slim. */
-#ifdef WAR1_BUILD
+#if defined(JUPITER_BOARD_PINE64)
+#define DL_MAIN_ARENA_BYTES (32u * 1024u * 1024u)
+#define DL_LOW_ARENA_BYTES  (1u * 1024u * 1024u)
+#elif defined(WAR1_BUILD)
 #define DL_MAIN_ARENA_BYTES   (24u * 1024u * 1024u)
 #define DL_LOW_ARENA_BYTES    (13u * 1024u * 1024u)
 #else
