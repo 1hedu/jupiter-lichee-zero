@@ -1,0 +1,54 @@
+Jupiter application baseline:
+ https://github.com/1hedu/jupiter-lichee-zero
+ claude/sdk-review-cleanup-ok3job
+ 4fb5904e0563771a8225d554e8506d1df9b3f4f6
+ Remote head rechecked at start of Pi 3 work and matched.
+ Reuses the reconciled PINE scene builder and the branch Mercury protocol.
+ Firmware on the Pico is neither built nor replaced by this package.
+
+Circle:
+ https://github.com/rsta2/circle
+ 7a81e1b480fe7d19fc1fc695b89bff0a0848f44b
+ RASPPI=3, AARCH=32, US keymap, default 16-bit framebuffer.
+ Local I2C changes: 50-ms transaction timeout and bounded RX FIFO drains.
+ Source bundled without upstream .git or generated build products.
+
+Circle libcamera:
+ https://github.com/rsta2/libcamera
+ b8c1f2c040625438d1a0dbdcecb1b271a4cfbb92
+ Local receiver changes: RGB888 format identifier, 3-byte stride, packet
+ type 0x24, bypass RAW unpacking, error history and corrupted-frame rejection.
+ The new bridge subclass uses raw DMA buffers directly, bypassing Bayer APIs.
+
+TC358743:
+ Register setup adapted from Jupiter mercury/v3s_side/tc358743_init.h.
+ V3s MMIO bus setup is replaced by Circle camera I2C0 and timed delays.
+ I2C errors are sticky across configuration; alternate-address probe failures
+ do not poison a later successful probe. Streaming is enabled after CSI RX.
+ Reference source inspected: raspberrypi/linux rpi-6.6.y
+ drivers/media/i2c/tc358743.c (RGB configuration / PLL / stream sequencing).
+
+Pi boot firmware:
+ https://github.com/raspberrypi/firmware
+ 0641c5bf25d185d5bf25d8dcafd1da6dc8fdbf68
+ bootcode.bin, start.elf, fixup.dat, LICENCE.broadcom
+
+New application and tests: app/, tests/, build.sh.
+Vendor files retain their copyright/license headers. Circle and libcamera
+licenses are included. Jupiter Mercury sources preserve their original text.
+
+Original display support: firmware DSI framebuffer, native resolution,
+4:3 capture fitting below touch controls. FT5406 is polled directly at
+0x38 on shared I2C0; disable_touchscreen=1 prevents firmware bus contention.
+Touch down/event/coordinate layout follows Circle rpitouchscreen.cpp.
+
+M2 local changes: full keyboard-sequence decoder; no Escape reboot shortcut;
+arrows/Enter navigation; native FT5x06 header/records and dual-axis inversion;
+GPIO27 N64 open-drain protocol using ARM generic counter; visible input status.
+Touch references: raspberrypi/linux rpi-6.6.y drivers/input/touchscreen/edt-ft5x06.c
+and arch/arm/boot/dts/overlays/edt-ft5406.dtsi.
+Host tests include keyboard escape regression, touch sequence/orientation,
+N64 waveform decoding, counter wrap, timeout and reconnect edges.
+
+Build portability: camera sqrtf explicitly uses GCC hardware builtin with
+-fno-math-errno; bare-metal link requires no external libm.

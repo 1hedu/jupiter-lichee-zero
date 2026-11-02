@@ -1,0 +1,114 @@
+--- a/include/camera/cameradevice.h
++++ b/include/camera/cameradevice.h
+@@ -52,6 +52,7 @@
+ 		FormatSGBRG10P	= CAMERA_FORMAT_CODE (GB, B, R, GR, 10, 1),
+ 		FormatSGRBG10P	= CAMERA_FORMAT_CODE (GR, R, B, GB, 10, 1),
+ 		FormatSRGGB10P	= CAMERA_FORMAT_CODE (R, GR, GB, B, 10, 1),
++		FormatRGB888 = 0x8007, // packed CSI-2 RGB888, 3 bytes per pixel
+ 		FormatUnknown	= 0
+ 	};
+ 
+--- a/include/camera/csi2cameradevice.h
++++ b/include/camera/csi2cameradevice.h
+@@ -28,6 +28,9 @@
+ 
+ 	TFormatInfo GetFormatInfo (void) const;
+ 
++public:
++	u32 GetReceiveErrors() const { return m_nErrors; }
++	unsigned GetDroppedFrames() const { return m_nDropped; }
+ protected:
+ 	bool EnableRX (void);
+ 	void DisableRX (void);
+@@ -67,6 +70,9 @@
+ 	bool m_bIRQConnected;
+ 
+ 	bool m_bActive;
++	volatile u32 m_nErrors = 0;
++	u32 m_nFrameErrors = 0;
++	volatile unsigned m_nDropped = 0;
+ 
+ 	CGPIOClock m_CAM1Clock;
+ 
+--- a/lib/camerabuffer.cpp
++++ b/lib/camerabuffer.cpp
+@@ -252,7 +252,7 @@
+ 
+ 	float fSum = Result[0] * Result[0] + Result[1] * Result[1] + Result[2] * Result[2];
+ 	fSum /= 3;
+-	fSum = sqrtf (fSum);
++	fSum = __builtin_sqrtf (fSum);
+ 
+ 	m_ColorFactor[0] = 65536 * fSum / Result[0];
+ 	m_ColorFactor[1] = 65536 * fSum / Result[1];
+--- a/lib/csi2cameradevice.cpp
++++ b/lib/csi2cameradevice.cpp
+@@ -135,7 +135,11 @@
+ 	if (m_nHeight < MIN_WIDTH) m_nHeight = MIN_WIDTH;
+ 	if (m_nHeight > MAX_WIDTH) m_nHeight = MAX_WIDTH;
+ 
+-	if (GetFormatDepth (GetLogicalFormat ()) == 8)
++	if (GetLogicalFormat () == FormatRGB888)
++	{
++		m_nBytesPerLine = __ALIGN (m_nWidth * 3, BPL_ALIGNMENT);
++	}
++	else if (GetFormatDepth (GetLogicalFormat ()) == 8)
+ 	{
+ 		m_nBytesPerLine = __ALIGN (m_nWidth, BPL_ALIGNMENT);
+ 	}
+@@ -186,9 +190,10 @@
+ 	m_bActive = true;
+ 
+ 	m_nSequence = 0;
++	m_nErrors = m_nFrameErrors = m_nDropped = 0;
+ 
+ 	u8 uchDepth = GetFormatDepth (GetPhysicalFormat ());
+-	assert (uchDepth == 8 || uchDepth == 10);
++	assert (uchDepth == 8 || uchDepth == 10 || GetPhysicalFormat () == FormatRGB888);
+ 
+ 	// Enable lane clocks (2 lanes)
+ 	ClockWrite (0b010101);
+@@ -292,7 +297,7 @@
+ 	// Set packing configuration
+ 	u32 nUnPack = UNICAM_PUM_NONE;
+ 	u32 nPack = UNICAM_PPM_NONE;
+-	if (uchDepth == 10)
++	if (uchDepth == 10 && GetPhysicalFormat () != FormatRGB888)
+ 	{
+ 		nUnPack = UNICAM_PUM_UNPACK10;
+ 		nPack = UNICAM_PPM_PACK16;		// Repacking to 16bpp
+@@ -304,7 +309,7 @@
+ 	WriteReg (UNICAM_IPIPE, nValue);
+ 
+ 	// CSI2 mode, hardcode VC 0 for now.
+-	WriteReg (UNICAM_IDI0, (0 << 6) | (uchDepth == 8 ? 0x2a : 0x2b));
++	WriteReg (UNICAM_IDI0, (0 << 6) | (GetPhysicalFormat () == FormatRGB888 ? 0x24 : (uchDepth == 8 ? 0x2a : 0x2b)));
+ 
+ 	nValue = ReadReg (UNICAM_MISC);
+ 	SetField (&nValue, 1, UNICAM_FL0);
+@@ -368,6 +373,9 @@
+ 	u32 nSTA = ReadReg (UNICAM_STA);
+ 	WriteReg (UNICAM_STA, nSTA);		// Write value back to clear the interrupts
+ 
++	u32 errors = nSTA & (UNICAM_PBE | UNICAM_HOE | UNICAM_PLE | UNICAM_CRCE | UNICAM_IFO | UNICAM_BFO);
++	m_nErrors |= errors;
++	m_nFrameErrors |= errors;
+ 	u32 nISTA = ReadReg (UNICAM_ISTA);
+ 	WriteReg (UNICAM_ISTA, nISTA);		// Write value back to clear the interrupts
+ 
+@@ -390,12 +398,14 @@
+ 			m_pCurrentBuffer->SetFormat (m_nWidth, m_nHeight, m_nBytesPerLine,
+ 						     GetLogicalFormat ());
+ 
+-			BufferReady (m_nSequence);
++			if (!m_nFrameErrors) BufferReady (m_nSequence);
++			else ++m_nDropped;
+ 
+ 			m_pCurrentBuffer = nullptr;
+ 		}
+ 
+ 		m_nSequence++;
++		m_nFrameErrors = 0;
+ 	}
+ 
+ 	// Frame start?

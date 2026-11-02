@@ -1,0 +1,14 @@
+# Jupiter Pi 3 M1: Circle boots directly, no Linux.
+arm_64bit=0
+kernel=kernel8-32.img
+kernel_address=0x8000
+initial_turbo=0
+enable_uart=1
+# Keep GPU memory for the firmware framebuffer; CSI buffers are ARM RAM.
+gpu_mem=64
+# Original official 7-inch DSI display is preferred when connected.
+# Leave firmware display detection active; do not force an HDMI mode.
+display_default_lcd=1
+disable_overscan=1
+# ARM owns the shared camera/display I2C bus and polls FT5406 directly.
+disable_touchscreen=1

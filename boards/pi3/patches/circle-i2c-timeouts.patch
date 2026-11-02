@@ -1,0 +1,86 @@
+--- a/lib/i2cmaster.cpp
++++ b/lib/i2cmaster.cpp
+@@ -190,6 +190,15 @@
+ 	}
+ 
+ 	m_SpinLock.Acquire ();
++	const unsigned transferStart = CTimer::GetClockTicks ();
++	auto TimedOut = [&]() {
++		if ((unsigned)(CTimer::GetClockTicks () - transferStart) < CLOCKHZ / 20) return false;
++		write32 (m_nBaseAddress + ARM_BSC_C__OFFSET, C_CLEAR);
++		write32 (m_nBaseAddress + ARM_BSC_S__OFFSET, S_CLKT | S_ERR | S_DONE);
++		PeripheralExit ();
++		m_SpinLock.Release ();
++		return true;
++	};
+ 
+ 	u8 *pData = (u8 *) pBuffer;
+ 	assert (pData != 0);
+@@ -211,7 +220,8 @@
+ 	// transfer active
+ 	while (!(read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_DONE))
+ 	{
+-		while (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_RXD)
++		if (TimedOut ()) return -I2C_MASTER_TIMEOUT;
++		while (nCount > 0 && (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_RXD))
+ 		{
+ 			*pData++ = read32 (m_nBaseAddress + ARM_BSC_FIFO__OFFSET) & FIFO__MASK;
+ 
+@@ -270,6 +280,15 @@
+ 	}
+ 
+ 	m_SpinLock.Acquire ();
++	const unsigned transferStart = CTimer::GetClockTicks ();
++	auto TimedOut = [&]() {
++		if ((unsigned)(CTimer::GetClockTicks () - transferStart) < CLOCKHZ / 20) return false;
++		write32 (m_nBaseAddress + ARM_BSC_C__OFFSET, C_CLEAR);
++		write32 (m_nBaseAddress + ARM_BSC_S__OFFSET, S_CLKT | S_ERR | S_DONE);
++		PeripheralExit ();
++		m_SpinLock.Release ();
++		return true;
++	};
+ 
+ 	u8 *pData = (u8 *) pBuffer;
+ 
+@@ -300,6 +319,7 @@
+ 	// transfer active
+ 	while (!(read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_DONE))
+ 	{
++		if (TimedOut ()) return -I2C_MASTER_TIMEOUT;
+ 		while (   nCount > 0
+ 		       && (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_TXD))
+ 		{
+@@ -355,6 +375,15 @@
+ 	}
+ 
+ 	m_SpinLock.Acquire ();
++	const unsigned transferStart = CTimer::GetClockTicks ();
++	auto TimedOut = [&]() {
++		if ((unsigned)(CTimer::GetClockTicks () - transferStart) < CLOCKHZ / 20) return false;
++		write32 (m_nBaseAddress + ARM_BSC_C__OFFSET, C_CLEAR);
++		write32 (m_nBaseAddress + ARM_BSC_S__OFFSET, S_CLKT | S_ERR | S_DONE);
++		PeripheralExit ();
++		m_SpinLock.Release ();
++		return true;
++	};
+ 
+ 	u8 *pWriteData = (u8 *) pWriteBuffer;
+ 
+@@ -380,6 +409,7 @@
+ 	// poll for transfer has started
+ 	while (!(read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_TA))
+ 	{
++		if (TimedOut ()) return -I2C_MASTER_TIMEOUT;
+ 		if (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_DONE)
+ 		{
+ 			break;
+@@ -401,7 +431,8 @@
+ 	// transfer active
+ 	while (!(read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_DONE))
+ 	{
+-		while (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_RXD)
++		if (TimedOut ()) return -I2C_MASTER_TIMEOUT;
++		while (nReadCount > 0 && (read32 (m_nBaseAddress + ARM_BSC_S__OFFSET) & S_RXD))
+ 		{
+ 			*pReadData++ = read32 (m_nBaseAddress + ARM_BSC_FIFO__OFFSET) & FIFO__MASK;
+ 

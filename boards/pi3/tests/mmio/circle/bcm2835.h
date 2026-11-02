@@ -1,0 +1,8 @@
+#pragma once
+#define ARM_IO_BASE 0x3f000000
+#define ARM_BSC_C__OFFSET 0
+#define ARM_BSC_S__OFFSET 4
+#define ARM_BSC_DLEN__OFFSET 8
+#define ARM_BSC_A__OFFSET 12
+#define ARM_BSC_FIFO__OFFSET 16
+#define ARM_BSC_DIV__OFFSET 20

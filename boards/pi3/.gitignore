@@ -1,0 +1,15 @@
+# fetched by fetch_vendor.sh
+vendor/
+boot/bootcode.bin
+boot/start.elf
+boot/fixup.dat
+# build outputs
+boot/kernel8-32.img
+app/*.o
+app/*.d
+app/*.elf
+app/*.lst
+app/*.map
+app/*.img
+tests/*.o
+tests/*_test
