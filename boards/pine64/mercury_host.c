@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * PINE A64 host for the EXISTING Mercury Pico firmware, branch 4fb5904e.
- * Allwinner SPI0, 8 bits / mode 0 / MSB first, transmit only. Manual CS
+ * Allwinner SPI0, 8 bits / mode 3 / MSB first, transmit only. Manual CS
  * spans a u16-LE length and its complete display list, including pauses.
  *
  * A64 pin mux/CCU: U-Boot spi-sunxi.c, sun50i_a64_pinctrl_functions,
@@ -28,9 +28,11 @@
 #define SPI_TXD  (SPI_BASE + 0x200u)
 #define SPI_GCR_ENABLE (BIT(0) | BIT(1) | BIT(7))
 #define SPI_GCR_RESET BIT(31)
-/* CPOL=CPHA=0, active-low CS, software-owned CS, discard RX during TX.
- * Do not change mode to match a different protocol/firmware. */
-#define SPI_TCR_IDLE (BIT(2) | BIT(6) | BIT(7) | BIT(8))
+/* CPOL=CPHA=1 (mode 3, bits 1/0), active-low CS, software-owned CS,
+ * discard RX during TX. Must match the Pico slave (mercury_spi.c):
+ * in mode 0 its PL022 accepts one byte per CS assertion, so every
+ * whole-list transfer was dropped. */
+#define SPI_TCR_IDLE (BIT(0) | BIT(1) | BIT(2) | BIT(6) | BIT(7) | BIT(8))
 #define SPI_XCH BIT(31)
 #define SPI_FIFO_RESET (BIT(31) | BIT(15))
 #define SPI_FIFO_ERROR (BIT(8) | BIT(9) | BIT(10) | BIT(11))
@@ -147,7 +149,7 @@ int pine64_mercury_init(void)
     if (rc) return rc;
     initialized = 1;
     stats.last_error = 0;
-    uart_puts("[mercury] existing firmware link: SPI0 1 MHz mode0, u16-LE length\n");
+    uart_puts("[mercury] firmware link: SPI0 1 MHz mode3, u16-LE length\n");
     uart_puts("[mercury] PC0 MOSI / PC2 SCK / PC3 CS; no ACK or framebuffer readback\n");
     return 0;
 }

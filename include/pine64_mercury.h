@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Wire contract of claude/sdk-review-cleanup-ok3job (4fb5904e): mode 0,
+/* Wire contract of claude/sdk-review-cleanup-ok3job (448b8ef+): mode 3,
  * CS low, u16 little-endian byte length, then the display list, CS high.
  * There is no acknowledgement, READY signal or framebuffer readback. */
 #define PINE64_MERCURY_SPI_HZ 1000000u

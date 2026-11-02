@@ -67,7 +67,7 @@ static void draw_hud(void)
     p = number(p, s->lists_sent); p = append(p, "  BYTES "); (void)number(p, s->bytes_sent);
     text(fb, 90, line, 0xffd5e4f5u);
     text(fb, 103, local_error ? pine64_mercury_error_string(local_error) :
-         paused ? "PAUSED - LAST SCENE REMAINS ON PICO TV" : "SPI 1 MHZ MODE 0 - NO ACK / READBACK CHANNEL",
+         paused ? "PAUSED - LAST SCENE REMAINS ON PICO TV" : "SPI 1 MHZ MODE 3 - NO ACK / READBACK CHANNEL",
          local_error ? 0xffff8e80u : 0xffb6c7d9u);
     text(fb, 126, "PINE CAPTURE: CSI-2 RECEIVER NOT PRESENT", 0xffffb680u);
     text(fb, 139, "A64 CAMERA INPUT IS PARALLEL 8-BIT", 0xffc4b6d4u);

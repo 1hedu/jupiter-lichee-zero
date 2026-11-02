@@ -83,7 +83,7 @@ void mercury_test_write32(uintptr_t address,uint32_t value)
     if(address!=TCR||!(value&BIT(31))) return;
     assert(hw.selected);
     assert(hw.us-hw.selected_at>=PINE64_MERCURY_SELECT_US);
-    assert((value&3u)==0); /* existing firmware is mode 0 */
+    assert((value&3u)==3u); /* mode 3: CPOL bit 1, CPHA bit 0 */
     assert(value&BIT(8)); /* RX discard: MISO is not used */
     assert(hw.ccr==(BIT(12)|11u)&&hw.clock==BIT(31));
     assert(hw.mbc&&hw.mbc<=63&&hw.mbc==hw.mtc&&hw.mbc==hw.bcc);
@@ -124,7 +124,7 @@ unsigned spi_init(spi_inst_t *spi,unsigned baud) {assert(spi==spi0);return baud;
 void spi_set_slave(spi_inst_t *spi,bool slave) {assert(spi==spi0&&slave);}
 void spi_set_format(spi_inst_t *spi,unsigned bits,unsigned cpol,unsigned cpha,unsigned order)
 {
-    assert(spi==spi0&&bits==8&&cpol==0&&cpha==0&&order==0);pico_format=1;
+    assert(spi==spi0&&bits==8&&cpol==1&&cpha==1&&order==0);pico_format=1;
 }
 void gpio_set_function(unsigned pin,unsigned function) {assert(function==1);pico_pins|=1u<<pin;}
 void gpio_pull_up(unsigned pin) {pico_pulls|=1u<<pin;}

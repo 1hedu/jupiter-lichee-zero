@@ -104,7 +104,8 @@ clock and CS pins are GP8, GP10 and GP9 respectively; its TV wiring remains
 as built. Do not use the old proposed GP8/9/10/11 + GP12 READY wiring for a
 SpotPear board: GP8–15 carry its HDMI signal.
 
-Each transfer is mode 0, MSB first, with a two-byte little-endian payload
+Each transfer is SPI mode 3 (CPOL 1, CPHA 1; the Pico firmware's mode
+since `448b8ef` — mode 0 dropped every multi-byte transfer), MSB first, with a two-byte little-endian payload
 length followed by up to 4096 display-list bytes under one continuous CS
 assertion. The A64 master runs at 1 MHz and holds CS low for 25 ms before
 clocking, giving the existing polling receiver time to finish its self-test
