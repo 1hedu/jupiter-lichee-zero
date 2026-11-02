@@ -1,15 +1,17 @@
 <div align="center">
 
-## PINE A64+ 2 GB port of the latest SDK branch
+## Boards
 
-The recovered A64 board port builds with `make BOARD=pine64 -j6 boot`.
-It includes all 46 menu demos from `claude/sdk-review-cleanup-ok3job`
-at `4fb5904e`, including Jupiter Modes Tour, DE2 Probe and Mercury GPU Bring-Up.
-See [PINE64 setup](boards/pine64/README.md) and
-[the upstream Mercury hardware/protocol](mercury/README.md). The PINE build
-uses the existing Pico firmware; it does not build or require a replacement.
-The original V3s
-instructions below apply to the default board build.
+| Board | Build | Status |
+|---|---|---|
+| Lichee Pi Zero (V3s) — default | `make` (see below) | Full SDK + menu. Mercury MIPI receive written, link debugging in progress |
+| PINE A64+ 2 GB | `make BOARD=pine64 -j6 boot` — [boards/pine64](boards/pine64/README.md) | 46-demo menu port; Mercury via Pico TV output (A64 has no MIPI CSI-2 input) |
+| Raspberry Pi 3 B/B+ | `boards/pi3/build.sh` — [boards/pi3](boards/pi3/README-FIRST.txt) | Mercury bring-up (Circle, no Linux); Pico → HDMI → TC358743 → Pi CSI proven on hardware |
+
+All hosts drive the [Mercury](mercury/README.md) Pico over SPI **mode 3**
+(since `448b8ef`; mode 0 never delivered a display list), so hosts and the
+Pico firmware must be updated together.
+The original V3s instructions below apply to the default board build.
 
 
 <img src="JupiterSDK-2.png" alt="Jupiter SDK" width="640">
