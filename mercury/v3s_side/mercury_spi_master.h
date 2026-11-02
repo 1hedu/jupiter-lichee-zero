@@ -1,7 +1,7 @@
 /*
  * Mercury — V3s SPI0 master (display-list link to the Pico)
  *
- * The Pico is an SPI slave (hardware SPI1, mode 0, MSB first) that
+ * The Pico is an SPI slave (mode 3: CPOL=1 CPHA=1, MSB first) that
  * expects CS-framed transfers: assert CS, stream a 2-byte little-endian
  * payload length then the payload, deassert CS. This driver sends the
  * whole message as ONE hardware burst, so the controller's automatic
@@ -51,6 +51,8 @@
 #define MSPI_GCR_TP_EN      (1u << 7)   /* stop txn when FIFO would over/underrun */
 #define MSPI_GCR_SRST       (1u << 31)  /* soft reset, self-clearing */
 
+#define MSPI_TCR_CPHA       (1u << 0)   /* Linux spi-sun6i.c TFR_CTL */
+#define MSPI_TCR_CPOL       (1u << 1)
 #define MSPI_TCR_SPOL       (1u << 2)   /* CS active-low */
 #define MSPI_TCR_DHB        (1u << 8)   /* discard RX during TX (we never read) */
 #define MSPI_TCR_XCH        (1u << 31)  /* start exchange */
@@ -94,9 +96,12 @@ static inline void mercury_spi_init(void)
         if (!(MSPI(MSPI_GCR) & MSPI_GCR_SRST)) break;
     MSPI(MSPI_GCR) = MSPI_GCR_EN | MSPI_GCR_MASTER | MSPI_GCR_TP_EN;
 
-    /* Mode 0 (CPOL=0, CPHA=0 — matches the Pico slave), CS active-low,
-     * automatic chip-select (SS_OWNER=0), discard RX. */
-    MSPI(MSPI_TCR) = MSPI_TCR_SPOL | MSPI_TCR_DHB;
+    /* Mode 3 (CPOL=1, CPHA=1 — matches the Pico slave; in mode 0 its
+     * SPI block only accepts one byte per CS assertion, so whole-packet
+     * bursts were dropped), CS active-low, automatic chip-select
+     * (SS_OWNER=0), discard RX. */
+    MSPI(MSPI_TCR) = MSPI_TCR_CPOL | MSPI_TCR_CPHA |
+                     MSPI_TCR_SPOL | MSPI_TCR_DHB;
 
     /* 24 MHz / (2*(1+1)) = 6 MHz, CDR2 mode (bit 12). */
     MSPI(MSPI_CCR) = (1u << 12) | 1u;

@@ -27,7 +27,15 @@ void j32x_spi_init(void)
     /* Init the preset SPI block in slave mode */
     spi_init(SPI_PORT, 25 * 1000 * 1000);  /* 25MHz max */
     spi_set_slave(SPI_PORT, true);
-    spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    /* Mode 3 (CPOL=1, CPHA=1), NOT mode 0. The PL022 SPI block
+     * (RP2040/RP2350 datasheets, Motorola format with SPH=0) needs CS
+     * pulsed high between EVERY byte when CPHA=0 — the slave freezes
+     * its shift register while CS stays low. Our hosts hold CS low for
+     * a whole display list, so in mode 0 only the first length byte
+     * arrived, every packet was dropped, and the self-test cube ran
+     * forever. With CPHA=1 CS may stay low across the transfer. The
+     * masters (V3s mercury_spi_master.h, Pi 3) must use mode 3 too. */
+    spi_set_format(SPI_PORT, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
 
     gpio_set_function(PIN_SPI_RX,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_SPI_SCK, GPIO_FUNC_SPI);
