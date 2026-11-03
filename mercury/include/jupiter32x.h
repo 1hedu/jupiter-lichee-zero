@@ -5,10 +5,13 @@
  * TC358743 bridge, which converts to MIPI CSI-2 for V3s capture.
  *
  * Boards / output routes (selected in CMakeLists.txt):
- *   Pico 2 / Pico 2 W (RP2350) — HSTX hardware DVI on GP12-19 (default)
- *   Pico (RP2040)              — PicoDVI bit-banged DVI on GP0-7
- *   either, MERCURY_ROUTE_DVP  — PIO parallel DVP on GP0-10
- * SPI1 slave (display list from V3s) on GP8-11, or GP12-15 for DVP.
+ *   Pico (RP2040), default     — PicoDVI (PIO) DVI, pins per board preset
+ *                                (SpotPear: GP8-15)
+ *   Pico 2 / 2 W (RP2350)      — PicoDVI, or HSTX hardware DVI for boards
+ *                                wired on GP12-19 (DVI_SOCK, AMY)
+ *   either, MERCURY_ROUTE_DVP  — PIO parallel DVP
+ * SPI slave (display list from the host), mode 3: SpotPear SPI0 GP4-7;
+ * other presets SPI1 GP8-11, DVP SPI1 GP12-15 (MERCURY_SPI_* below).
  *
  * Scanout interface is abstracted — the rasterizer and display list
  * parser never know which route is compiled in.
@@ -56,7 +59,7 @@
  *
  *   SPOTPEAR (default) SpotPear Pico HDMI board  TMDS GP8-15, inverted
  *                      (DDC SDA/SCL/CEC also on GP18/19/20 — reserved)
- *                      -> PicoDVI (PIO) route on Pico 2 W or Pico
+ *                      -> PicoDVI (PIO) route on Pico or Pico 2
  *   DVI_SOCK           Pico DVI Sock             TMDS GP12-19
  *   AMY                Amy's DVI board           TMDS GP12-19, inverted
  *                      -> HSTX route on Pico 2 / 2 W, PicoDVI on Pico

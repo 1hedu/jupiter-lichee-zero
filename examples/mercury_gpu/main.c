@@ -51,7 +51,7 @@
  *   UI0 = V3s HUD with per-pixel alpha on top
  * — the 32X arrangement: 2D console layers around a coprocessor's 3D.
  *
- * Wiring — docs/PIN_OVERLAYS.md Overlay 4, Pico 2 W + SpotPear HDMI:
+ * Wiring — docs/PIN_OVERLAYS.md Overlay 4, Pico (RP2040) + SpotPear HDMI:
  *   SPI:  V3s PC1=CLK PC2=CS PC3=MOSI  →  Pico GP6=SCK GP5=CSn GP4=RX
  *   I2C:  V3s PE21=SCL PE22=SDA (TWI1) →  bridge TC358743 (addr 0x0F)
  * (Other Pico DVI boards: see the board presets in mercury/README.md.)

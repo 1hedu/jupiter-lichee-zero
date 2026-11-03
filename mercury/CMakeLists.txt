@@ -1,18 +1,22 @@
 # Mercury — Pico polygon coprocessor
 #
-# Defaults: Pico 2 W (RP2350) + SpotPear Pico HDMI board.
-#   cmake ..                                   Pico 2 W + SpotPear (PicoDVI)
-#   cmake -DMERCURY_DVI_BOARD=DVI_SOCK ..      Pico 2 W + DVI Sock (HSTX)
-#   cmake -DPICO_BOARD=pico ..                 RP2040 Pico (PicoDVI)
+# Defaults: Raspberry Pi Pico (RP2040) + SpotPear Pico HDMI board — the
+# hardware Mercury is proven on (its bootloader reports RPI-RP2).
+#   cmake ..                                   Pico + SpotPear (PicoDVI)
+#   cmake -DPICO_BOARD=pico2 ..                Pico 2 / 2 W (RP2350) + SpotPear
+#   cmake -DPICO_BOARD=pico2 -DMERCURY_DVI_BOARD=DVI_SOCK ..
+#                                              Pico 2 + DVI Sock (HSTX)
 #   cmake -DMERCURY_ROUTE_DVP=ON ..            either chip: PIO parallel DVP
 # The DVI route follows chip + board: HSTX (RP2350 hardware TMDS) when
 # the board's pairs sit on GP12-19, else PicoDVI (PIO, needs
 # external/PicoDVI). DVI feeds a TC358743; DVP feeds a TC358748.
 cmake_minimum_required(VERSION 3.13)
 
-# Must precede the SDK import: the board picks the chip (pico2_w -> rp2350)
+# Must precede the SDK import: the board picks the chip (pico -> rp2040,
+# pico2 / pico2_w -> rp2350). Check yours: hold BOOTSEL, plug in, read
+# INFO_UF2.TXT — "RPI-RP2" is an RP2040, "RP2350" a Pico 2.
 if(NOT DEFINED PICO_BOARD)
-    set(PICO_BOARD pico2_w CACHE STRING "Board (pico2_w, pico2, pico)")
+    set(PICO_BOARD pico CACHE STRING "Board (pico, pico2, pico2_w)")
 endif()
 
 include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
@@ -97,7 +101,7 @@ else()
     target_link_libraries(mercury libdvi hardware_vreg)
     # Run from SRAM, as SpotPear's and PicoDVI's own builds do: the boot
     # stage copies the program out of flash, so the 252 MHz overclock
-    # never drives XIP. On the Pico 2 W the flash runs at clk_sys / 2
+    # never drives XIP. On RP2350 boards the flash runs at clk_sys / 2
     # with sampling delays tuned for 150 MHz — overclocking while
     # executing from flash puts it at 126 MHz and can corrupt fetches
     # the instant the clock switches (chip dies before USB comes up).

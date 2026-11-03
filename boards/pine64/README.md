@@ -85,7 +85,7 @@ claimed. The source's "Cedar JPEG" slot is accurately labeled H.264 decode.
 Keep the Pico firmware and SpotPear HDMI connection that already display the
 cube on your TV. The PINE menu sends the **existing branch's display lists**
 to that firmware; it does not install a new Pico protocol or require a UF2.
-The newest `mercury/` tree is retained unchanged, including the Pico 2 W
+The newest `mercury/` tree is retained unchanged, including the RP2040/RP2350
 presets, HSTX alternative, PicoDVI SRAM execution and frame-boundary swaps.
 
 For the branch's default **SpotPear** build, the PINE side is:

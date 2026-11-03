@@ -222,7 +222,7 @@ All controllers + YM3438: yes (controllers on PF/PE, YM3438 on PB/PG).
 └──────┘         └──────────┘   FPC    └──────────┘         └──────────┘
 ```
 
-### Pico DVI Output — Pico 2 W + SpotPear Pico HDMI board
+### Pico DVI Output — Pico (RP2040) + SpotPear Pico HDMI board
 
 The SpotPear board plugs onto the Pico and provides the HDMI connector
 and 270Ω TMDS resistors — no hand wiring. It routes TMDS to GP8–GP15

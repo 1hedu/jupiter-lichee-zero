@@ -1,6 +1,6 @@
 # Mercury — Pico Polygon Coprocessor for Jupiter
 
-A Raspberry Pi Pico 2 W (RP2350; the original RP2040 Pico is still supported) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, streaming frames back to the Allwinner V3s through its MIPI CSI-2 camera input (via a bridge chip — see "Pico → V3s bridge chip" below). Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
+A Raspberry Pi Pico (RP2040 — the board Mercury is proven on; Pico 2 / RP2350 builds are also supported) that acts as a 3D polygon rendering coprocessor for the Jupiter SDK, streaming frames back to the Allwinner V3s through its MIPI CSI-2 camera input (via a bridge chip — see "Pico → V3s bridge chip" below). Mercury is to Jupiter what the 32X was to the Genesis — a small fast companion that adds a capability the host platform doesn't have on its own (in our case, real polygon hardware).
 
 ## Architecture
 
@@ -30,7 +30,7 @@ The V3s sends a display list over SPI each frame (~2KB of triangle/quad commands
 > uses for the RGB LCD — a direct Pico→PE parallel hookup is not
 > possible alongside the display.
 
-## Wiring — Pico 2 W + SpotPear Pico HDMI board (default)
+## Wiring — Pico (RP2040) + SpotPear Pico HDMI board (default)
 
 The SpotPear board plugs onto the Pico (HDMI connector + 270 Ω TMDS
 resistors on board). Its schematic routes TMDS to **GP8–GP15** and HDMI
@@ -198,9 +198,10 @@ The cube uses painter's algorithm (back-to-front face sorting) and integer-only 
 export PICO_SDK_PATH=/path/to/pico-sdk          # SDK 2.1.1 or newer
 cd mercury && mkdir build && cd build
 git clone https://github.com/Wren6991/PicoDVI external/PicoDVI  # PicoDVI boards
-cmake ..                                  # Pico 2 W + SpotPear (default)
-# cmake -DMERCURY_DVI_BOARD=DVI_SOCK ..   #   DVI Sock: HSTX, no PicoDVI needed
-# cmake -DPICO_BOARD=pico ..              #   RP2040 Pico (+ any board preset)
+cmake ..                                  # Pico (RP2040) + SpotPear (default)
+# cmake -DPICO_BOARD=pico2 ..             #   Pico 2 / 2 W (RP2350) + SpotPear
+# cmake -DPICO_BOARD=pico2 -DMERCURY_DVI_BOARD=DVI_SOCK ..
+#                                         #   Pico 2 + DVI Sock: HSTX, no PicoDVI
 # cmake -DMERCURY_ROUTE_DVP=ON ..         #   parallel DVP route instead
 make
 ```
@@ -212,7 +213,9 @@ The SDK fetches and builds `picotool` on first configure for RP2350
 targets (set `PICOTOOL_FETCH_FROM_GIT_PATH` to share it across builds).
 
 Flash `mercury.uf2`: hold BOOTSEL while plugging in USB, drag the file
-onto the drive that appears.
+onto the drive that appears. Check the chip first: that drive's
+`INFO_UF2.TXT` says `RPI-RP2` on an RP2040 Pico and `RP2350` on a Pico 2.
+A UF2 for the other chip is ignored (the board stays in BOOTSEL).
 
 ## V3s Integration
 
